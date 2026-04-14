@@ -317,6 +317,7 @@ function handleStreamChunk(tabId, message) {
 async function storeMessage(tabId, msg) {
   const key = "conv_" + tabId;
   try {
+    storageManager.flushWrite(key); // Ensure any pending writes are flushed before reading
     const messages = await storageManager.get(key) || [];
     const streamKey = "stream_" + tabId;
     const streaming = streamingMessages.get(streamKey);
@@ -354,6 +355,7 @@ async function storeStreamedMessage(tabId) {
   streamingMessages.delete(streamKey);
   const key = "conv_" + tabId;
   try {
+    storageManager.flushWrite(key); // Ensure any pending writes are flushed before reading
     const messages = await storageManager.get(key) || [];
     messages.push({ role: "assistant", content: streaming.content, model: streaming.model, timestamp: streaming.startTime, streamed: true });
     if (messages.length > 100) messages.splice(0, messages.length - 100);
