@@ -62,13 +62,16 @@ var injectWeb = (function () {
             await this.sendSingleHandshakeRequest();
             this.isReady = !0;
             this.stopHandshakeRetry();
+            console.log("[VIVIM:INJECT] ✅ Handshake successful", { communicationId: this.communicationId, timestamp: Date.now() });
             t();
           } catch (s) {
             if (this.handshakeAttempts++, this.handshakeAttempts >= this.options.maxHandshakeAttempts) {
               this.stopHandshakeRetry();
+              console.error("[VIVIM:INJECT] ❌ Handshake failed", { error: s, attempts: this.handshakeAttempts, timestamp: Date.now() });
               e(new Error(`建联失败: ${s}`));
               return;
             }
+            console.log("[VIVIM:INJECT] 🔄 Retrying handshake", { attempt: this.handshakeAttempts, maxAttempts: this.options.maxHandshakeAttempts, timestamp: Date.now() });
             this.handshakeRetryInterval = setTimeout(i, this.options.handshakeRetryInterval);
           }
         };
@@ -81,11 +84,26 @@ var injectWeb = (function () {
           s = setTimeout(() => { this.pendingRequests.delete(i); e(new Error("握手超时")); }, this.options.handshakeTimeout);
         this.pendingRequests.set(i, { resolve: t, reject: e, timeout: s });
         const n = { type: this.messageType, communicationId: this.communicationId, id: i, action: k, data: { timestamp: Date.now() }, needResponse: !0, timestamp: Date.now() };
+        console.log("[VIVIM:INJECT] 📤 Handshake request sent", { communicationId: this.communicationId, requestId: i, timestamp: Date.now() });
         globalThis.postMessage(n, "*");
       });
     }
     stopHandshakeRetry() { this.handshakeRetryInterval && (clearTimeout(this.handshakeRetryInterval), this.handshakeRetryInterval = void 0); }
-    send(t, e) { const i = { type: this.messageType, communicationId: this.communicationId, id: this.generateId(), action: t, data: e, needResponse: !1, timestamp: Date.now() }; globalThis.postMessage(i, "*"); }
+    send(t, e) { 
+      if (!this.isReady) {
+        console.log("[VIVIM:INJECT] ⏳ Auto-waiting for handshake before send...", { action: t, timestamp: Date.now() });
+        this.ensureReady().then(() => {
+          console.log("[VIVIM:INJECT] ✅ Handshake complete, sending queued message", { action: t, timestamp: Date.now() });
+          const i = { type: this.messageType, communicationId: this.communicationId, id: this.generateId(), action: t, data: e, needResponse: !1, timestamp: Date.now() }; 
+          console.log("[VIVIM:INJECT] 📤 send() executing", { action: t, communicationId: this.communicationId, timestamp: Date.now() });
+          globalThis.postMessage(i, "*"); 
+        });
+        return;
+      }
+      const i = { type: this.messageType, communicationId: this.communicationId, id: this.generateId(), action: t, data: e, needResponse: !1, timestamp: Date.now() }; 
+      console.log("[VIVIM:INJECT] 📤 send() executing (sync)", { action: t, communicationId: this.communicationId, timestamp: Date.now() });
+      globalThis.postMessage(i, "*"); 
+    }
     async invoke(t, e) { return await this.ensureReady(), this.invokeRequest(t, e); }
     async invokeRequest(t, e) {
       return new Promise((i, s) => {
@@ -190,83 +208,76 @@ var injectWeb = (function () {
   window.KimiAuthStore = c;
 
   // ═══════════════════════════════════════════════════════
-  // XMLHttpRequest interceptors (unchanged — they don't stack)
+  // Claude Auth Store (claude.ai)
   // ═══════════════════════════════════════════════════════
 
-  class I {
-    originalXHROpen = null;
-    originalXHRSend = null;
-    isHooked = !1;
-    targetUrl = "/_/BardChatUi/data/batchexecute";
-    start() { this.isHooked || (this.hookXHR(), this.isHooked = !0); }
-    stop() { this.isHooked && (this.unhookXHR(), this.isHooked = !1); }
-    isGeminiAPIRequest(t) { return t.includes(this.targetUrl); }
-    hasTargetRpcids(t) { try { return new URL(t, window.location.origin).searchParams.get("rpcids") === "hNvQHb"; } catch { return !1; } }
-    hookXHR() {
-      this.originalXHROpen = XMLHttpRequest.prototype.open;
-      this.originalXHRSend = XMLHttpRequest.prototype.send;
-      const t = this;
-      XMLHttpRequest.prototype.open = function (e, i, s, n, r) {
-        this._interceptor_url = i;
-        this._interceptor_headers = {};
-        const a = this.setRequestHeader.bind(this);
-        return this.setRequestHeader = function (h, u) { h.toLowerCase().startsWith("x-goog-ext-") && (this._interceptor_headers[h] = u); a(h, u); }, t.originalXHROpen.call(this, e, i, s !== !1, n || null, r || null);
-      };
-      XMLHttpRequest.prototype.send = function (e) {
-        const i = this._interceptor_url, s = this._interceptor_headers;
-        if (i && t.isGeminiAPIRequest(i)) { try { const r = new URL(i, window.location.origin).searchParams.get("_reqid"); r && f.setReqId(r); } catch {} i && t.hasTargetRpcids(i) && s && Object.keys(s).length > 0 && f.setExtHeaders(s); }
-        return t.originalXHRSend.call(this, e);
-      };
-    }
-    unhookXHR() { this.originalXHROpen && (XMLHttpRequest.prototype.open = this.originalXHROpen); this.originalXHRSend && (XMLHttpRequest.prototype.send = this.originalXHRSend); }
+  class ClaudeAuthStore {
+    static authorization = null;
+    static sessionKey = null;
+    static updatedAt = null;
+    static setAuthData(t) { t && (this.authorization = t, this.updatedAt = Date.now()); }
+    static setSessionKey(t) { t && (this.sessionKey = t, this.updatedAt = Date.now()); }
+    static getLatest() { return { authorization: this.authorization, sessionKey: this.sessionKey, updatedAt: this.updatedAt }; }
   }
-
-  class x {
-    originalXHROpen = null;
-    originalXHRSend = null;
-    isHooked = !1;
-    targetUrl = "/_/LabsTailwindUi/data/batchexecute";
-    start() { this.isHooked || (this.hookXHR(), this.isHooked = !0); }
-    stop() { this.isHooked && (this.unhookXHR(), this.isHooked = !1); }
-    isNotebookLMAPIRequest(t) { return t.includes(this.targetUrl); }
-    hasTargetRpcids(t) { try { const i = new URL(t, window.location.origin).searchParams.get("rpcids"); return i === "VfAZjd" || i === "khqZz"; } catch { return !1; } }
-    hookXHR() {
-      this.originalXHROpen = XMLHttpRequest.prototype.open;
-      this.originalXHRSend = XMLHttpRequest.prototype.send;
-      const t = this;
-      XMLHttpRequest.prototype.open = function (e, i, s, n, r) { return this._interceptor_url = i, t.originalXHROpen.call(this, e, i, s !== !1, n || null, r || null); };
-      XMLHttpRequest.prototype.send = function (e) {
-        const i = this._interceptor_url;
-        if (i && t.isNotebookLMAPIRequest(i) && t.hasTargetRpcids(i)) {
-          try { const n = new URL(i, window.location.origin).searchParams.get("_reqid"); n && l.setReqId(n); } catch {}
-          if (typeof e == "string") { if (e.includes("at=")) try { const n = new URLSearchParams(e).get("at"); n && l.setAtToken(n); } catch {} } else if (e instanceof URLSearchParams) { const s = e.get("at"); s && l.setAtToken(s); } else if (e instanceof FormData) { const s = e.get("at"); s && typeof s == "string" && l.setAtToken(s); }
-          try { if (new URL(i, window.location.origin).searchParams.get("rpcids") === "khqZz") { let r = null; if (typeof e == "string" && e.includes("f.req=")) r = new URLSearchParams(e).get("f.req"); else if (e instanceof URLSearchParams) r = e.get("f.req"); else if (e instanceof FormData) { const a = e.get("f.req"); r = typeof a == "string" ? a : null; } if (r) { const h = JSON.parse(r)?.[0]?.[0]?.[1]; if (h) { const p = JSON.parse(h)?.[3]; p && typeof p == "string" && l.setConversationUuid(p); } } } } catch {}
-        }
-        return t.originalXHRSend.call(this, e);
-      };
-    }
-    unhookXHR() { this.originalXHROpen && (XMLHttpRequest.prototype.open = this.originalXHROpen); this.originalXHRSend && (XMLHttpRequest.prototype.send = this.originalXHRSend); }
-  }
-
-  class S {
-    originalXHROpen = null;
-    originalXHRSend = null;
-    isHooked = !1;
-    targetSuffix = "MakerSuiteService/ResolveDriveResource";
-    start() { this.isHooked || (this.hookXHR(), this.isHooked = !0); }
-    stop() { this.isHooked && (this.unhookXHR(), this.isHooked = !1); }
-    isTargetRequest(t) { const e = typeof t == "string" ? t : t.toString(); return e.endsWith(this.targetSuffix) || e.includes(this.targetSuffix + "?") || e.includes(this.targetSuffix + "$"); }
-    hookXHR() {
-      this.originalXHROpen = XMLHttpRequest.prototype.open;
-      this.originalXHRSend = XMLHttpRequest.prototype.send;
-      const t = this;
-      XMLHttpRequest.prototype.open = function (e, i, s, n, r) { return this._interceptor_url = i, t.originalXHROpen.call(this, e, i, s !== !1, n || null, r || null); };
-      XMLHttpRequest.prototype.send = function (e) { const i = this._interceptor_url; return i && t.isTargetRequest(i) && w.setUrl(i), t.originalXHRSend.call(this, e); };
-    }
-    unhookXHR() { this.originalXHROpen && (XMLHttpRequest.prototype.open = this.originalXHROpen); this.originalXHRSend && (XMLHttpRequest.prototype.send = this.originalXHRSend); }
-  }
+  window.ClaudeAuthStore = ClaudeAuthStore;
 
   // ═══════════════════════════════════════════════════════
+  // DeepSeek Auth Store (deepseek.com)
+  // ═══════════════════════════════════════════════════════
+
+  class DeepSeekAuthStore {
+    static authorization = null;
+    static updatedAt = null;
+    static setAuthData(t) { t && (this.authorization = t, this.updatedAt = Date.now()); }
+    static getLatest() { return { authorization: this.authorization, updatedAt: this.updatedAt }; }
+  }
+  window.DeepSeekAuthStore = DeepSeekAuthStore;
+
+  // ═══════════════════════════════════════════════════════
+  // Perplexity Auth Store (perplexity.ai)
+  // ═══════════════════════════════════════════════════════
+
+  class PerplexityAuthStore {
+    static authorization = null;
+    static updatedAt = null;
+    static setAuthData(t) { t && (this.authorization = t, this.updatedAt = Date.now()); }
+    static getLatest() { return { authorization: this.authorization, updatedAt: this.updatedAt }; }
+  }
+  window.PerplexityAuthStore = PerplexityAuthStore;
+
+  class GrokAuthStore {
+    static authorization = null;
+    static updatedAt = null;
+    static setAuthData(t) { t && (this.authorization = t, this.updatedAt = Date.now()); }
+    static getLatest() { return { authorization: this.authorization, updatedAt: this.updatedAt }; }
+  }
+  window.GrokAuthStore = GrokAuthStore;
+
+  class PoeAuthStore {
+    static authorization = null;
+    static updatedAt = null;
+    static setAuthData(t) { t && (this.authorization = t, this.updatedAt = Date.now()); }
+    static getLatest() { return { authorization: this.authorization, updatedAt: this.updatedAt }; }
+  }
+  window.PoeAuthStore = PoeAuthStore;
+
+  class TongyiAuthStore {
+    static authorization = null;
+    static updatedAt = null;
+    static setAuthData(t) { t && (this.authorization = t, this.updatedAt = Date.now()); }
+    static getLatest() { return { authorization: this.authorization, updatedAt: this.updatedAt }; }
+  }
+  window.TongyiAuthStore = TongyiAuthStore;
+
+  class YuanbaoAuthStore {
+    static authorization = null;
+    static updatedAt = null;
+    static setAuthData(t) { t && (this.authorization = t, this.updatedAt = Date.now()); }
+    static getLatest() { return { authorization: this.authorization, updatedAt: this.updatedAt }; }
+  }
+  window.YuanbaoAuthStore = YuanbaoAuthStore;
+
+  // ═══════════════════════════════════════════════════════════
   // Header utilities (shared by plugins)
   // ═══════════════════════════════════════════════════════
 
@@ -294,16 +305,189 @@ var injectWeb = (function () {
   }
 
   // ═══════════════════════════════════════════════════════
-  // Plugin interface (base class)
+  // Plugin interface (base class) — supports fetch + XHR
   // ═══════════════════════════════════════════════════════
 
   class Plugin {
     get name() { return "BasePlugin"; }
+    // Protocol: 'fetch' | 'xhr' | 'both'
+    get protocol() { return 'fetch'; }
     matchRequest(ctx) { return false; }
     onRequest(ctx) {}
     matchResponse(ctx) { return false; }
     onResponse(ctx) {}
   }
+
+  class GeminiPlugin extends Plugin {
+    get name() { return "Gemini"; }
+    get protocol() { return 'xhr'; }
+    targetUrl = "/_/BardChatUi/data/batchexecute";
+
+    matchRequest(ctx) {
+      return ctx.url?.includes(this.targetUrl);
+    }
+
+    onRequest(ctx) {
+      try {
+        const reqId = new URL(ctx.url, window.location.origin).searchParams.get("_reqid");
+        reqId && f.setReqId(reqId);
+      } catch {}
+
+      try {
+        const hasRpcid = new URL(ctx.url, window.location.origin).searchParams.get("rpcids") === "hNvQHb";
+        if (hasRpcid && ctx.headers) {
+          const extHeaders = {};
+          for (const [k, v] of Object.entries(ctx.headers)) {
+            if (k.toLowerCase().startsWith("x-goog-ext-")) extHeaders[k] = v;
+          }
+          Object.keys(extHeaders).length > 0 && f.setExtHeaders(extHeaders);
+        }
+      } catch {}
+    }
+  }
+
+  class NotebookLMPlugin extends Plugin {
+    get name() { return "NotebookLM"; }
+    get protocol() { return 'xhr'; }
+    targetUrl = "/_/LabsTailwindUi/data/batchexecute";
+
+    matchRequest(ctx) {
+      try {
+        const rpcid = new URL(ctx.url, window.location.origin).searchParams.get("rpcids");
+        return ctx.url?.includes(this.targetUrl) && (rpcid === "VfAZjd" || rpcid === "khqZz");
+      } catch { return false; }
+    }
+
+    onRequest(ctx) {
+      try {
+        const reqId = new URL(ctx.url, window.location.origin).searchParams.get("_reqid");
+        reqId && l.setReqId(reqId);
+      } catch {}
+
+      const body = ctx.body;
+      if (!body) return;
+
+      let atToken = null;
+      if (typeof body === "string" && body.includes("at=")) {
+        atToken = new URLSearchParams(body).get("at");
+      } else if (body instanceof URLSearchParams) {
+        atToken = body.get("at");
+      } else if (body instanceof FormData) {
+        const at = body.get("at");
+        atToken = typeof at === "string" ? at : null;
+      }
+      atToken && l.setAtToken(atToken);
+
+      try {
+        const rpcid = new URL(ctx.url, window.location.origin).searchParams.get("rpcids");
+        if (rpcid === "khqZz") {
+          let fReq = null;
+          if (typeof body === "string" && body.includes("f.req=")) {
+            fReq = new URLSearchParams(body).get("f.req");
+          } else if (body instanceof URLSearchParams) {
+            fReq = body.get("f.req");
+          } else if (body instanceof FormData) {
+            const f = body.get("f.req");
+            fReq = typeof f === "string" ? f : null;
+          }
+          if (fReq) {
+            const parsed = JSON.parse(fReq)?.[0]?.[0]?.[1];
+            if (parsed) {
+              const convUuid = JSON.parse(parsed)?.[3];
+              convUuid && typeof convUuid === "string" && l.setConversationUuid(convUuid);
+            }
+          }
+        }
+      } catch {}
+    }
+  }
+
+  class GoogleAIResolvePlugin extends Plugin {
+    get name() { return "GoogleAIResolve"; }
+    get protocol() { return 'xhr'; }
+    targetSuffix = "MakerSuiteService/ResolveDriveResource";
+
+    matchRequest(ctx) {
+      const url = typeof ctx.url === "string" ? ctx.url : ctx.url?.toString() || "";
+      return url.endsWith(this.targetSuffix) || url.includes(this.targetSuffix + "?") || url.includes(this.targetSuffix + "$");
+    }
+
+    onRequest(ctx) {
+      const url = typeof ctx.url === "string" ? ctx.url : ctx.url?.toString() || "";
+      url && w.setUrl(url);
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════
+  // XHR Interceptor wrapper — routes XHR to plugins
+  // ═══════════════════════════════════════════════════════
+
+  class XHRInterceptor {
+    constructor() {
+      this.plugins = [];
+      this.initialized = false;
+    }
+
+    register(plugin) { this.plugins.push(plugin); }
+
+    // Initialize once — prototype patch both open() and send()
+    start() {
+      if (this.initialized) return;
+      this.initialized = true;
+
+      const originalOpen = XMLHttpRequest.prototype.open;
+      const originalSend = XMLHttpRequest.prototype.send;
+      const self = this;
+
+      // Hook open() — capture URL + method
+      XMLHttpRequest.prototype.open = function (method, url, ...rest) {
+        this._xhr_url = url;
+        this._xhr_method = method;
+        this._xhr_headers = {};
+        // Wrap setRequestHeader to capture headers
+        const originalSetHeader = this.setRequestHeader.bind(this);
+        this.setRequestHeader = function (key, value) {
+          this._xhr_headers[key.toLowerCase()] = value;
+          originalSetHeader(key, value);
+        };
+        return originalOpen.call(this, method, url, ...rest);
+      };
+
+      // Hook send() — run plugins before request
+      XMLHttpRequest.prototype.send = function (body) {
+        const ctx = {
+          protocol: 'xhr',
+          method: this._xhr_method,
+          url: this._xhr_url,
+          headers: { ...this._xhr_headers },
+          body: body,
+          xhr: this, // reference to XHR instance
+          timestamp: Date.now()
+        };
+
+        // Run request plugins
+        for (const plugin of self.plugins) {
+          if (plugin.protocol !== 'xhr' && plugin.protocol !== 'both') continue;
+          if (plugin.matchRequest?.(ctx)) {
+            try { plugin.onRequest?.(ctx); } catch (e) { /* silent */ }
+          }
+        }
+
+        // Continue with original send
+        return originalSend.call(this, body);
+      };
+
+      console.log("[VIVIM inject] XHR interceptor started");
+    }
+
+    stop() {
+      // Restore original prototypes (simplified)
+      this.initialized = false;
+    }
+  }
+
+  // Singleton XHR interceptor
+  const xhrInterceptor = new XHRInterceptor();
 
   // ═══════════════════════════════════════════════════════
   // ChatGPT Plugin
@@ -329,6 +513,43 @@ var injectWeb = (function () {
         if (X.some(p => lower.startsWith(p))) extras[k] = v;
       }
       Object.keys(extras).length > 0 && g.setExtraHeaders(extras);
+
+      // Handle user prompt intercept
+      const isConversationEndpoint = ctx.url?.match(/\/backend-api(\/f)?\/conversation(\?|$)/);
+      if (isConversationEndpoint && ctx.init?.body && window.__VIVIM_BRIDGE) {
+        try {
+          const bodyStr = typeof ctx.init.body === 'string' ? ctx.init.body : new TextDecoder().decode(ctx.init.body);
+          const payload = JSON.parse(bodyStr);
+          if (payload.messages && Array.isArray(payload.messages)) {
+            // Find the last user message
+            const userMessages = payload.messages.filter(m => m.author?.role === 'user');
+            const userMessage = userMessages[userMessages.length - 1];
+            if (userMessage && userMessage.content?.parts) {
+               // Safely extract string parts (e.g. ignore multimodal visual objects)
+const content = userMessage.content.parts
+                  .filter(p => typeof p === 'string')
+                  .join('\n');
+                if (content) {
+                  console.log("[VIVIM:INJECT] 📤 userPrompt sent", { 
+                    role: "user", 
+                    contentLength: content.length, 
+                    conversationId: payload.conversation_id,
+                    timestamp: Date.now(),
+                    url: ctx.url?.slice(0, 80)
+                  });
+                  window.__VIVIM_BRIDGE.send("userPrompt", {
+                    role: "user",
+                    content: content,
+                    conversationId: payload.conversation_id || null
+                  });
+                  console.log("[VIVIM:INJECT] ✅ userPrompt sent to bridge");
+                }
+            }
+          }
+        } catch (e) {
+          console.warn("[VIVIM inject] Failed to parse ChatGPT request body:", e);
+        }
+      }
     }
 
     matchResponse(ctx) {
@@ -373,6 +594,8 @@ var injectWeb = (function () {
         let currentModel = "unknown";
         let currentRole = null;
         let streamEnded = false;
+        let chunkSequence = 0; // Fix #12: sequence number for ordering guarantee
+        const streamId = "stream_" + Date.now() + "_" + Math.floor(Math.random()*1000);
 
         // SSE event parsing state
         let currentEvent = "message"; // default
@@ -434,34 +657,62 @@ var injectWeb = (function () {
                           currentModel = subValue.model_slug;
                         }
 
-                        // Append text content
-                        if (subPath === "/message/content/parts/0" && subOpType === "append") {
-                          reconstructedText += subValue;
-                          appendCount++;
+                        // Append or Replace text content
+                        if (subPath === "/message/content/parts/0") {
+                          if (subOpType === "append") {
+                            reconstructedText += subValue;
+                            appendCount++;
+                            chunkSequence++;
+                          } else if (subOpType === "replace" || subOpType === "add") {
+                            reconstructedText = subValue;
+                            appendCount++;
+                            chunkSequence++;
+                          }
 
-                          // Send chunk to bridge
-                          if (appendCount % 3 === 0 && window.__VIVIM_BRIDGE && reconstructedText) {
-                            window.__VIVIM_BRIDGE.send("chatChunk", {
+                          // Send chunk to bridge on every content update with sequence number
+if (window.__VIVIM_BRIDGE && reconstructedText) {
+        console.log("[VIVIM:INJECT] 📤 chatChunk sent", { 
+          seq: chunkSequence, 
+          contentLength: reconstructedText.length, 
+          model: currentModel, 
+          url: ctx.url?.slice(0, 50),
+          timestamp: Date.now(),
+          contentPreview: reconstructedText.slice(0, 100)
+        });
+        window.__VIVIM_BRIDGE.send("chatChunk", {
                               role: currentRole || "assistant",
                               content: reconstructedText,
                               model: currentModel,
-                              url: ctx.url
+                              url: ctx.url,
+                              seq: chunkSequence,
+                              streamId: streamId,
+                              cumulative: true
                             });
                           }
                         }
                       }
-                    } else if (op === "append" && path === "/message/content/parts/0") {
-                      // Single append operation
-                      reconstructedText += value;
-                      appendCount++;
+                    } else if (path === "/message/content/parts/0") {
+                      // Single append/replace operation
+                      if (op === "append") {
+                        reconstructedText += value;
+                        appendCount++;
+                        chunkSequence++;
+                      } else if (op === "replace" || op === "add") {
+                        reconstructedText = value;
+                        appendCount++;
+                        chunkSequence++;
+                      }
 
-                      // Send chunk every few appends
-                      if (appendCount % 3 === 0 && window.__VIVIM_BRIDGE && reconstructedText) {
+                      // Send chunk on every update with sequence number
+                      if (window.__VIVIM_BRIDGE && reconstructedText) {
                         window.__VIVIM_BRIDGE.send("chatChunk", {
                           role: currentRole || "assistant",
                           content: reconstructedText,
                           model: currentModel,
-                          url: ctx.url
+                          url: ctx.url,
+                          seq: chunkSequence,
+                          streamId: streamId,
+                          cumulative: true
                         });
                       }
                     }
@@ -508,6 +759,12 @@ var injectWeb = (function () {
               eventData = eventData ? eventData + "\n" + trimmed.slice(6) : trimmed.slice(6);
             }
           }
+          if (eventData && currentEvent === "delta") {
+            eventCount++;
+            try {
+              processDeltaPayload(JSON.parse(eventData));
+            } catch (e) {}
+          }
         }
 
         function processDeltaPayload(payload) {
@@ -536,18 +793,32 @@ var injectWeb = (function () {
               if (subPath === "/message/metadata" && subOpType === "add" && subValue?.model_slug) {
                 currentModel = subValue.model_slug;
               }
-              if (subPath === "/message/content/parts/0" && subOpType === "append") {
-                reconstructedText += subValue;
-                appendCount++;
+              if (subPath === "/message/content/parts/0") {
+                if (subOpType === "append") {
+                  reconstructedText += subValue;
+                  appendCount++;
+                  chunkSequence++;
+                } else if (subOpType === "replace" || subOpType === "add") {
+                  reconstructedText = subValue;
+                  appendCount++;
+                  chunkSequence++;
+                }
               }
               // Fix #10: break early on stream end
               if (subPath === "/message/status" && subOpType === "replace" && subValue === "finished_successfully") {
                 streamEnded = true;
               }
             }
-          } else if (op === "append" && path === "/message/content/parts/0") {
-            reconstructedText += value;
-            appendCount++;
+          } else if (path === "/message/content/parts/0") {
+            if (op === "append") {
+              reconstructedText += value;
+              appendCount++;
+              chunkSequence++;
+            } else if (op === "replace" || op === "add") {
+              reconstructedText = value;
+              appendCount++;
+              chunkSequence++;
+            }
           }
           if (path === "/message/status" && op === "replace" && value === "finished_successfully") {
             streamEnded = true;
@@ -556,25 +827,29 @@ var injectWeb = (function () {
 
         // Send final reconstructed message
         if (reconstructedText && window.__VIVIM_BRIDGE) {
-          console.log(`[VIVIM inject] 📤 Sending final message: ${reconstructedText.length} chars, ${appendCount} appends`);
+          chunkSequence++;
+          console.log(`[VIVIM inject] 📤 Sending final message: ${reconstructedText.length} chars, ${appendCount} appends, seq=${chunkSequence}`);
           window.__VIVIM_BRIDGE.send("chatChunk", {
             role: currentRole || "assistant",
             content: reconstructedText,
             model: currentModel,
-            url: ctx.url
+            url: ctx.url,
+            seq: chunkSequence,
+            streamId: streamId,
+            cumulative: true
           });
         }
 
         // Signal stream complete
         console.log(`[VIVIM inject] ✅ Stream finished — ${eventCount} events, ${appendCount} text appends, ${reconstructedText.length} chars`);
         if (window.__VIVIM_BRIDGE) {
-          window.__VIVIM_BRIDGE.send("streamComplete", { timestamp: Date.now() });
+          window.__VIVIM_BRIDGE.send("streamComplete", { streamId, timestamp: Date.now() });
         }
       } catch (e) {
         console.warn("[VIVIM inject] Stream read error:", e);
         // Still try to send complete so sidepanel exits streaming state
         if (window.__VIVIM_BRIDGE) {
-          window.__VIVIM_BRIDGE.send("streamComplete", { timestamp: Date.now() });
+          window.__VIVIM_BRIDGE.send("streamComplete", { streamId, timestamp: Date.now() });
         }
       }
     }
@@ -604,6 +879,7 @@ var injectWeb = (function () {
 
   class KimiPlugin extends Plugin {
     get name() { return "Kimi"; }
+
     extraHeaderKeys = ["x-language", "x-msh-device-id", "x-msh-platform", "x-msh-session-id", "x-msh-version", "x-traffic-id", "r-timezone"];
 
     matchRequest(ctx) {
@@ -622,6 +898,468 @@ var injectWeb = (function () {
         if (this.extraHeaderKeys.includes(k.toLowerCase())) extras[k] = v;
       }
       Object.keys(extras).length > 0 && c.setExtraHeaders(extras);
+    }
+  }
+
+  // Claude Plugin (claude.ai web)
+  class ClaudePlugin extends Plugin {
+    get name() { return "Claude"; }
+
+    matchRequest(ctx) {
+      return ctx.url?.includes("claude.ai");
+    }
+
+    onRequest(ctx) {
+      const auth = ctx.headers["Authorization"] || ctx.headers["authorization"];
+      if (auth) ClaudeAuthStore.setAuthData(auth);
+
+      const sessionKey = ctx.headers["x-session-key"] || ctx.headers["x-session-key"];
+      if (sessionKey) ClaudeAuthStore.setSessionKey(sessionKey);
+    }
+
+    matchResponse(ctx) {
+      return ctx.url?.includes("claude.ai");
+    }
+
+    async onResponse(ctx) {
+      const clone = ctx.clone;
+      if (!clone || !clone.body) return;
+
+      try {
+        const reader = clone.body.getReader();
+        const decoder = new TextDecoder("utf-8");
+        let buffer = "";
+        let fullContent = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (trimmed.startsWith("data: ")) {
+              const data = trimmed.slice(6);
+              if (data === "[DONE]") continue;
+              try {
+                const event = JSON.parse(data);
+                if (event.delta?.text) {
+                  fullContent += event.delta.text;
+                  if (window.__VIVIM_BRIDGE) {
+                    window.__VIVIM_BRIDGE.send("chatChunk", {
+                      role: "assistant",
+                      content: fullContent,
+                      model: event.model || "claude",
+                      url: ctx.url,
+                    });
+                  }
+                }
+              } catch {}
+            }
+          }
+        }
+
+        if (window.__VIVIM_BRIDGE) {
+          window.__VIVIM_BRIDGE.send("streamComplete", { timestamp: Date.now() });
+        }
+      } catch (e) {}
+    }
+  }
+
+  // DeepSeek Plugin (deepseek.com)
+  class DeepSeekPlugin extends Plugin {
+    get name() { return "DeepSeek"; }
+
+    matchRequest(ctx) {
+      return ctx.url?.includes("deepseek.com");
+    }
+
+    onRequest(ctx) {
+      const auth = ctx.headers["Authorization"] || ctx.headers["authorization"];
+      if (auth) DeepSeekAuthStore.setAuthData(auth);
+    }
+
+    matchResponse(ctx) {
+      return ctx.url?.includes("deepseek.com");
+    }
+
+    async onResponse(ctx) {
+      const clone = ctx.clone;
+      if (!clone || !clone.body) return;
+
+      try {
+        const reader = clone.body.getReader();
+        const decoder = new TextDecoder("utf-8");
+        let buffer = "";
+        let fullContent = "";
+        let currentModel = "deepseek-chat";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (trimmed.startsWith("data: ")) {
+              const data = trimmed.slice(6);
+              if (data === "[DONE]") continue;
+              try {
+                const event = JSON.parse(data);
+                if (event.choices?.[0]?.delta?.content) {
+                  fullContent += event.choices[0].delta.content;
+                  if (event.model) currentModel = event.model;
+                  if (window.__VIVIM_BRIDGE) {
+                    window.__VIVIM_BRIDGE.send("chatChunk", {
+                      role: "assistant",
+                      content: fullContent,
+                      model: currentModel,
+                      url: ctx.url,
+                    });
+                  }
+                }
+              } catch {}
+            }
+          }
+        }
+
+        if (window.__VIVIM_BRIDGE) {
+          window.__VIVIM_BRIDGE.send("streamComplete", { timestamp: Date.now() });
+        }
+      } catch (e) {}
+    }
+  }
+
+  // Perplexity Plugin (perplexity.ai)
+  class PerplexityPlugin extends Plugin {
+    get name() { return "Perplexity"; }
+
+    matchRequest(ctx) {
+      return ctx.url?.includes("perplexity.ai");
+    }
+
+    onRequest(ctx) {
+      const auth = ctx.headers["Authorization"] || ctx.headers["authorization"];
+      if (auth) PerplexityAuthStore.setAuthData(auth);
+    }
+
+    matchResponse(ctx) {
+      return ctx.url?.includes("perplexity.ai");
+    }
+
+    async onResponse(ctx) {
+      const clone = ctx.clone;
+      if (!clone || !clone.body) return;
+
+      try {
+        const reader = clone.body.getReader();
+        const decoder = new TextDecoder("utf-8");
+        let buffer = "";
+        let fullContent = "";
+        let currentModel = "sonar";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (trimmed.startsWith("data: ")) {
+              const data = trimmed.slice(6);
+              if (data === "[DONE]") continue;
+              try {
+                const event = JSON.parse(data);
+                if (event.choices?.[0]?.delta?.content) {
+                  fullContent += event.choices[0].delta.content;
+                  if (event.model) currentModel = event.model;
+                  if (window.__VIVIM_BRIDGE) {
+                    window.__VIVIM_BRIDGE.send("chatChunk", {
+                      role: "assistant",
+                      content: fullContent,
+                      model: currentModel,
+                      url: ctx.url,
+                    });
+                  }
+                }
+              } catch {}
+            }
+          }
+        }
+
+        if (window.__VIVIM_BRIDGE) {
+          window.__VIVIM_BRIDGE.send("streamComplete", { timestamp: Date.now() });
+        }
+      } catch (e) {}
+    }
+  }
+
+  class GrokPlugin extends Plugin {
+    get name() { return "Grok"; }
+
+    matchRequest(ctx) {
+      return ctx.url?.includes("grok.com") || ctx.url?.includes("api.x.ai");
+    }
+
+    onRequest(ctx) {
+      const auth = ctx.headers["Authorization"] || ctx.headers["authorization"];
+      if (auth) GrokAuthStore.setAuthData(auth);
+    }
+
+    matchResponse(ctx) {
+      return ctx.url?.includes("grok.com") || ctx.url?.includes("api.x.ai");
+    }
+
+    async onResponse(ctx) {
+      const clone = ctx.clone;
+      if (!clone || !clone.body) return;
+
+      try {
+        const reader = clone.body.getReader();
+        const decoder = new TextDecoder("utf-8");
+        let buffer = "";
+        let fullContent = "";
+        let currentModel = "grok-4";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (trimmed.startsWith("data: ")) {
+              const data = trimmed.slice(6);
+              if (data === "[DONE]") continue;
+              try {
+                const event = JSON.parse(data);
+                if (event.choices?.[0]?.delta?.content) {
+                  fullContent += event.choices[0].delta.content;
+                  if (event.model) currentModel = event.model;
+                  if (window.__VIVIM_BRIDGE) {
+                    window.__VIVIM_BRIDGE.send("chatChunk", {
+                      role: "assistant",
+                      content: fullContent,
+                      model: currentModel,
+                      url: ctx.url,
+                    });
+                  }
+                }
+              } catch {}
+            }
+          }
+        }
+
+        if (window.__VIVIM_BRIDGE) {
+          window.__VIVIM_BRIDGE.send("streamComplete", { timestamp: Date.now() });
+        }
+      } catch (e) {}
+    }
+  }
+
+  class PoePlugin extends Plugin {
+    get name() { return "Poe"; }
+
+    matchRequest(ctx) {
+      return ctx.url?.includes("poe.com");
+    }
+
+    onRequest(ctx) {
+      const auth = ctx.headers["Authorization"] || ctx.headers["authorization"];
+      if (auth) PoeAuthStore.setAuthData(auth);
+    }
+
+    matchResponse(ctx) {
+      return ctx.url?.includes("poe.com");
+    }
+
+    async onResponse(ctx) {
+      const clone = ctx.clone;
+      if (!clone || !clone.body) return;
+
+      try {
+        const reader = clone.body.getReader();
+        const decoder = new TextDecoder("utf-8");
+        let buffer = "";
+        let fullContent = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (trimmed.startsWith("data: ")) {
+              const data = trimmed.slice(6);
+              if (data === "[DONE]") continue;
+              try {
+                const event = JSON.parse(data);
+                if (event.choices?.[0]?.delta?.content) {
+                  fullContent += event.choices[0].delta.content;
+                  if (window.__VIVIM_BRIDGE) {
+                    window.__VIVIM_BRIDGE.send("chatChunk", {
+                      role: "assistant",
+                      content: fullContent,
+                      model: event.model || "poe",
+                      url: ctx.url,
+                    });
+                  }
+                }
+              } catch {}
+            }
+          }
+        }
+
+        if (window.__VIVIM_BRIDGE) {
+          window.__VIVIM_BRIDGE.send("streamComplete", { timestamp: Date.now() });
+        }
+      } catch (e) {}
+    }
+  }
+
+  class TongyiPlugin extends Plugin {
+    get name() { return "Tongyi"; }
+
+    matchRequest(ctx) {
+      return ctx.url?.includes("tongyi.aliyun.com") || ctx.url?.includes("dashscope");
+    }
+
+    onRequest(ctx) {
+      const auth = ctx.headers["Authorization"] || ctx.headers["authorization"];
+      if (auth) TongyiAuthStore.setAuthData(auth);
+    }
+
+    matchResponse(ctx) {
+      return ctx.url?.includes("tongyi.aliyun.com") || ctx.url?.includes("dashscope");
+    }
+
+    async onResponse(ctx) {
+      const clone = ctx.clone;
+      if (!clone || !clone.body) return;
+
+      try {
+        const reader = clone.body.getReader();
+        const decoder = new TextDecoder("utf-8");
+        let buffer = "";
+        let fullContent = "";
+        let currentModel = "qwen-plus";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (trimmed.startsWith("data: ")) {
+              const data = trimmed.slice(6);
+              if (data === "[DONE]") continue;
+              try {
+                const event = JSON.parse(data);
+                if (event.choices?.[0]?.delta?.content) {
+                  fullContent += event.choices[0].delta.content;
+                  if (event.model) currentModel = event.model;
+                  if (window.__VIVIM_BRIDGE) {
+                    window.__VIVIM_BRIDGE.send("chatChunk", {
+                      role: "assistant",
+                      content: fullContent,
+                      model: currentModel,
+                      url: ctx.url,
+                    });
+                  }
+                }
+              } catch {}
+            }
+          }
+        }
+
+        if (window.__VIVIM_BRIDGE) {
+          window.__VIVIM_BRIDGE.send("streamComplete", { timestamp: Date.now() });
+        }
+      } catch (e) {}
+    }
+  }
+
+  class YuanbaoPlugin extends Plugin {
+    get name() { return "Yuanbao"; }
+
+    matchRequest(ctx) {
+      return ctx.url?.includes("yuanbao.tencent.com") || ctx.url?.includes("hunyuan");
+    }
+
+    onRequest(ctx) {
+      const auth = ctx.headers["Authorization"] || ctx.headers["authorization"];
+      if (auth) YuanbaoAuthStore.setAuthData(auth);
+    }
+
+    matchResponse(ctx) {
+      return ctx.url?.includes("yuanbao.tencent.com") || ctx.url?.includes("hunyuan");
+    }
+
+    async onResponse(ctx) {
+      const clone = ctx.clone;
+      if (!clone || !clone.body) return;
+
+      try {
+        const reader = clone.body.getReader();
+        const decoder = new TextDecoder("utf-8");
+        let buffer = "";
+        let fullContent = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (trimmed.startsWith("data: ")) {
+              const data = trimmed.slice(6);
+              if (data === "[DONE]") continue;
+              try {
+                const event = JSON.parse(data);
+                if (event.choices?.[0]?.delta?.content) {
+                  fullContent += event.choices[0].delta.content;
+                  if (window.__VIVIM_BRIDGE) {
+                    window.__VIVIM_BRIDGE.send("chatChunk", {
+                      role: "assistant",
+                      content: fullContent,
+                      model: event.model || "hunyuan",
+                      url: ctx.url,
+                    });
+                  }
+                }
+              } catch {}
+            }
+          }
+        }
+
+        if (window.__VIVIM_BRIDGE) {
+          window.__VIVIM_BRIDGE.send("streamComplete", { timestamp: Date.now() });
+        }
+      } catch (e) {}
     }
   }
 
@@ -665,9 +1403,11 @@ var injectWeb = (function () {
       this.isHooked = !0;
       this.originalFetch = window.fetch;
       const self = this;
+      console.log("[VIVIM:INJECT] 🔗 Fetch interceptor STARTED, originalFetch:", typeof self.originalFetch);
 
       window.fetch = async function (input, init) {
         const url = resolveUrl(input);
+        console.log("[VIVIM:INJECT] 🔗 fetch() intercepted:", url?.slice(0, 60), "plugins:", self.plugins.length);
 
         // ── REQUEST PHASE (sync) ──
 
@@ -721,12 +1461,316 @@ var injectWeb = (function () {
   }
 
   // ═══════════════════════════════════════════════════════
+  // StreamDestination interface
+  // ═══════════════════════════════════════════════════════
+
+  class StreamDestination {
+    get id() { return "base"; }
+    get capabilities() { return { receivesStreaming: false, receivesComplete: false, canSendPrompts: false }; }
+    onChunk(msg) {}
+    onComplete(conversationId) {}
+    onError(conversationId, error) {}
+    sendPrompt(conversationId, prompt) { return Promise.reject(new Error("Not implemented")); }
+    dispose() {}
+  }
+
+  class DestinationRegistry {
+    #destinations = new Map();
+
+    register(dest) {
+      this.#destinations.set(dest.id, dest);
+    }
+
+    unregister(id) {
+      const dest = this.#destinations.get(id);
+      if (dest) {
+        dest.dispose();
+        this.#destinations.delete(id);
+      }
+    }
+
+    get(id) { return this.#destinations.get(id); }
+
+    getAll() { return Array.from(this.#destinations.values()); }
+
+    broadcastChunk(msg) {
+      for (const dest of this.#destinations.values()) {
+        if (dest.capabilities.receivesStreaming) {
+          try { dest.onChunk(msg); } catch (e) { /* silent */ }
+        }
+      }
+    }
+
+    broadcastComplete(conversationId) {
+      for (const dest of this.#destinations.values()) {
+        if (dest.capabilities.receivesComplete) {
+          try { dest.onComplete(conversationId); } catch (e) { /* silent */ }
+        }
+      }
+    }
+
+    broadcastError(conversationId, error) {
+      for (const dest of this.#destinations.values()) {
+        try { dest.onError(conversationId, error); } catch (e) { /* silent */ }
+      }
+    }
+  }
+
+  // Singleton
+  const destinationRegistry = new DestinationRegistry();
+
+  // ═══════════════════════════════════════════════════════
+  // WebSocket Destination (stub for external tools)
+  // ═══════════════════════════════════════════════════════
+
+  class WebSocketDestination extends StreamDestination {
+    #socket = null;
+    #url = null;
+    #protocol = null;
+    #reconnectAttempts = 0;
+    #maxReconnectAttempts = 5;
+    #reconnectDelay = 1000;
+    #heartbeatInterval = null;
+    #heartbeatTimeout = 30000;
+    #lastMessageTime = 0;
+    #buffer = [];
+    #connected = false;
+
+    constructor(config = {}) {
+      super();
+      this.#url = config.url || "ws://localhost:8080";
+      this.#protocol = config.protocol || null;
+      this.#maxReconnectAttempts = config.maxReconnectAttempts || 5;
+      this.#reconnectDelay = config.reconnectDelay || 1000;
+      this.#heartbeatTimeout = config.heartbeatTimeout || 30000;
+    }
+
+    get id() { return "websocket"; }
+    get capabilities() { return { receivesStreaming: true, receivesComplete: true, canSendPrompts: true }; }
+
+    configure(config) {
+      if (config.url) {
+        this.#url = config.url;
+        if (this.#socket) {
+          this.#socket.close();
+          this.#connect();
+        }
+      }
+      if (config.protocol) this.#protocol = config.protocol;
+      if (config.maxReconnectAttempts) this.#maxReconnectAttempts = config.maxReconnectAttempts;
+      if (config.reconnectDelay) this.#reconnectDelay = config.reconnectDelay;
+    }
+
+    connect() {
+      this.#connect();
+    }
+
+    #connect() {
+      try {
+        const options = this.#protocol ? { protocol: this.#protocol } : undefined;
+        this.#socket = new WebSocket(this.#url, options);
+
+        this.#socket.onopen = () => {
+          this.#connected = true;
+          this.#reconnectAttempts = 0;
+          this.#startHeartbeat();
+          this.#flushBuffer();
+        };
+
+        this.#socket.onclose = (e) => {
+          this.#connected = false;
+          this.#stopHeartbeat();
+          this.#scheduleReconnect();
+        };
+
+        this.#socket.onerror = (e) => {
+          this.#connected = false;
+        };
+
+        this.#socket.onmessage = (e) => {
+          this.#lastMessageTime = Date.now();
+          try {
+            const msg = JSON.parse(e.data);
+            if (msg.type === "pong") return;
+            if (window.__VIVIM_BRIDGE) {
+              window.__VIVIM_BRIDGE.send("wsMessage", msg);
+            }
+          } catch {}
+        };
+      } catch (e) {
+        console.warn("[VIVIM] WebSocket connect error:", e);
+      }
+    }
+
+    #startHeartbeat() {
+      this.#heartbeatInterval = setInterval(() => {
+        if (this.#socket?.readyState === WebSocket.OPEN) {
+          this.#socket.send(JSON.stringify({ type: "ping", timestamp: Date.now() }));
+        }
+      }, this.#heartbeatTimeout);
+    }
+
+    #stopHeartbeat() {
+      if (this.#heartbeatInterval) {
+        clearInterval(this.#heartbeatInterval);
+        this.#heartbeatInterval = null;
+      }
+    }
+
+    #scheduleReconnect() {
+      if (this.#reconnectAttempts >= this.#maxReconnectAttempts) return;
+      this.#reconnectAttempts++;
+      const delay = this.#reconnectDelay * Math.pow(2, this.#reconnectAttempts - 1);
+      setTimeout(() => this.#connect(), delay);
+    }
+
+    #flushBuffer() {
+      while (this.#buffer.length > 0 && this.#socket?.readyState === WebSocket.OPEN) {
+        const msg = this.#buffer.shift();
+        this.#socket.send(msg);
+      }
+    }
+
+    onChunk(msg) {
+      const payload = JSON.stringify({ type: "chunk", data: msg, timestamp: Date.now() });
+      if (this.#socket?.readyState === WebSocket.OPEN) {
+        this.#socket.send(payload);
+      } else {
+        this.#buffer.push(payload);
+      }
+    }
+
+    onComplete(msg) {
+      const payload = JSON.stringify({
+        type: "complete",
+        conversationId: msg?.conversationId || null,
+        content: msg?.content || "",
+        timestamp: Date.now(),
+      });
+      if (this.#socket?.readyState === WebSocket.OPEN) {
+        this.#socket.send(payload);
+      } else {
+        this.#buffer.push(payload);
+      }
+    }
+
+    sendPrompt(conversationId, prompt) {
+      return new Promise((resolve, reject) => {
+        const payload = JSON.stringify({ type: "prompt", conversationId, prompt, timestamp: Date.now() });
+        if (this.#socket?.readyState === WebSocket.OPEN) {
+          this.#socket.send(payload);
+          resolve();
+        } else {
+          reject(new Error("WebSocket not connected"));
+        }
+      });
+    }
+
+    dispose() {
+      this.#stopHeartbeat();
+      this.#buffer = [];
+      if (this.#socket) {
+        this.#socket.close();
+        this.#socket = null;
+      }
+      this.#connected = false;
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════
+  // Webhook Destination (stub for external endpoints)
+  // ═══════════════════════════════════════════════════════
+
+  class WebhookDestination extends StreamDestination {
+    #url = null;
+    #authHeader = null;
+    #retryCount = 0;
+    #maxRetries = 3;
+    #timeout = 10000;
+
+    constructor(config = {}) {
+      super();
+      this.#url = config.url || null;
+      this.#authHeader = config.authHeader || null;
+      this.#maxRetries = config.maxRetries || 3;
+      this.#timeout = config.timeout || 10000;
+    }
+
+    get id() { return "webhook"; }
+    get capabilities() { return { receivesStreaming: false, receivesComplete: true, canSendPrompts: false }; }
+
+    configure(config) {
+      if (config.url) this.#url = config.url;
+      if (config.authHeader) this.#authHeader = config.authHeader;
+      if (config.maxRetries) this.#maxRetries = config.maxRetries;
+      if (config.timeout) this.#timeout = config.timeout;
+    }
+
+    async onChunk(msg) {}
+
+    async onComplete(msg) {
+      if (!this.#url) return;
+
+      const payload = {
+        type: "complete",
+        conversationId: msg?.conversationId || null,
+        timestamp: Date.now(),
+        provider: msg?.model || "unknown",
+        content: msg?.content || "",
+      };
+
+      await this.#sendWithRetry(payload);
+    }
+
+    async #sendWithRetry(payload, attempt = 0) {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), this.#timeout);
+
+      const headers = { "Content-Type": "application/json" };
+      if (this.#authHeader) {
+        if (this.#authHeader.startsWith("Bearer ")) {
+          headers["Authorization"] = this.#authHeader;
+        } else if (this.#authHeader.startsWith("Basic ")) {
+          headers["Authorization"] = this.#authHeader;
+        } else {
+          headers["X-API-Key"] = this.#authHeader;
+        }
+      }
+
+      try {
+        const response = await fetch(this.#url, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(payload),
+          signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
+
+        if (!response.ok && attempt < this.#maxRetries) {
+          await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+          return this.#sendWithRetry(payload, attempt + 1);
+        }
+      } catch (e) {
+        clearTimeout(timeoutId);
+        if (attempt < this.#maxRetries) {
+          await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+          return this.#sendWithRetry(payload, attempt + 1);
+        }
+      }
+    }
+
+    dispose() {}
+  }
+
+  // ═══════════════════════════════════════════════════════
   // Main bootstrap
   // ═══════════════════════════════════════════════════════
 
   const b = y(() => {
+    console.log("[VIVIM:INJECT] 🚀 Initializing VIVIM injection script...");
     const o = L("inject-chat-web", { allowedIds: ["saveai-extension-content"] });
     window.__VIVIM_BRIDGE = o;
+    console.log("[VIVIM:INJECT] ✅ __VIVIM_BRIDGE created and ready");
     o.handle("getGeminiGlobalData", () => window.WIZ_global_data);
     o.handle("getGoogleAiKeys", () => window.AF_initDataKeys);
     o.handle("getCopilotAuthHeader", () => H.getLatest());
@@ -736,27 +1780,59 @@ var injectWeb = (function () {
     o.handle("getGoogleAiResolveUrl", () => w.getLatest());
     o.handle("getNotebookLMLatestReqId", () => l.getLatest());
     o.handle("getKimiAuthHeader", () => c.getLatest());
+    o.handle("getClaudeAuthHeader", () => ClaudeAuthStore.getLatest());
+    o.handle("getDeepSeekAuthHeader", () => DeepSeekAuthStore.getLatest());
+    o.handle("getPerplexityAuthHeader", () => PerplexityAuthStore.getLatest());
+    o.handle("getGrokAuthHeader", () => GrokAuthStore.getLatest());
+    o.handle("getPoeAuthHeader", () => PoeAuthStore.getLatest());
+    o.handle("getTongyiAuthHeader", () => TongyiAuthStore.getLatest());
+    o.handle("getYuanbaoAuthHeader", () => YuanbaoAuthStore.getLatest());
 
-    // ── Single fetch interceptor with plugin pipeline ──
+    // ── Fetch interceptor with fetch-based plugins ──
+    console.log("[VIVIM:INJECT] 🔧 Setting up fetch interceptor with 10 plugins...");
 
     const fetchInterceptor = new FetchInterceptor();
     fetchInterceptor.register(new ChatGPTPlugin());
+    console.log("[VIVIM:INJECT]   ✓ ChatGPTPlugin registered");
     fetchInterceptor.register(new CopilotPlugin());
+    console.log("[VIVIM:INJECT]   ✓ CopilotPlugin registered");
     fetchInterceptor.register(new KimiPlugin());
+    console.log("[VIVIM:INJECT]   ✓ KimiPlugin registered");
+    fetchInterceptor.register(new ClaudePlugin());
+    console.log("[VIVIM:INJECT]   ✓ ClaudePlugin registered");
+    fetchInterceptor.register(new DeepSeekPlugin());
+    console.log("[VIVIM:INJECT]   ✓ DeepSeekPlugin registered");
+    fetchInterceptor.register(new PerplexityPlugin());
+    console.log("[VIVIM:INJECT]   ✓ PerplexityPlugin registered");
+    fetchInterceptor.register(new GrokPlugin());
+    console.log("[VIVIM:INJECT]   ✓ GrokPlugin registered");
+    fetchInterceptor.register(new PoePlugin());
+    console.log("[VIVIM:INJECT]   ✓ PoePlugin registered");
+    fetchInterceptor.register(new TongyiPlugin());
+    console.log("[VIVIM:INJECT]   ✓ TongyiPlugin registered");
+    fetchInterceptor.register(new YuanbaoPlugin());
+    console.log("[VIVIM:INJECT]   ✓ YuanbaoPlugin registered");
     fetchInterceptor.start();
+    console.log("[VIVIM:INJECT] ✅ Fetch interceptor started (10 plugins active)");
 
-    // XHR interceptors (these don't stack — prototype-patch once)
-    const t = () => { const d = new I; d.start(); window.addEventListener("beforeunload", () => { d.stop(); }); };
-    const s = () => { const d = new S; d.start(); window.addEventListener("beforeunload", () => { d.stop(); }); };
-    const n = () => { const d = new x; d.start(); window.addEventListener("beforeunload", () => { d.stop(); }); };
+    // ── XHR interceptor with XHR-based plugins ──
+    console.log("[VIVIM:INJECT] 🔧 Setting up XHR interceptor with 3 plugins...");
+    xhrInterceptor.register(new GeminiPlugin());
+    console.log("[VIVIM:INJECT]   ✓ GeminiPlugin registered");
+    xhrInterceptor.register(new NotebookLMPlugin());
+    console.log("[VIVIM:INJECT]   ✓ NotebookLMPlugin registered");
+    xhrInterceptor.register(new GoogleAIResolvePlugin());
+    console.log("[VIVIM:INJECT]   ✓ GoogleAIResolvePlugin registered");
 
     const a = document.URL.includes("https://gemini.google.com");
-    const u = document.URL.includes("https://chatgpt.com");
     const P = document.URL.includes("https://notebooklm.google.com");
 
-    a && t();
-    u && s();
-    P && n();
+    if (a || P) {
+      xhrInterceptor.start();
+      console.log("[VIVIM:INJECT] ✅ XHR interceptor started (3 plugins active)");
+    }
+
+    console.log("[VIVIM:INJECT] 🎉 VIVIM injection fully initialized!");
   });
 
   function D() {}

@@ -1,32 +1,56 @@
 // VIVIM POC — Background Service Worker
-// Message router + tab tracking + side panel management
 
 const CONVERSATION_ENDPOINT = "/backend-api/conversation";
-
-// Track which tabs have ChatGPT open
-const chatgptTabs = new Map(); // tabId -> { conversationId, title }
-
-// Current active tab ID (for side panel communication)
+const chatgptTabs = new Map();
 let activeTabId = null;
 
-// ─── Tab Detection ───────────────────────────────────────────────
+// Destination Registry
+const destinations = new Map();
+const destinationCapabilities = {
+  sidepanel: { receivesStreaming: true, receivesComplete: true, canSendPrompts: false },
+  webhook: { receivesStreaming: false, receivesComplete: true, canSendPrompts: false },
+  websocket: { receivesStreaming: true, receivesComplete: true, canSendPrompts: true },
+};
 
+function registerDestination(id, config = {}) {
+  destinations.set(id, { capabilities: destinationCapabilities[id] || {}, config, connected: false });
+}
+
+function unregisterDestination(id) {
+  destinations.delete(id);
+}
+
+function broadcastToDestination(id, type, payload) {
+  const dest = destinations.get(id);
+  if (!dest) return;
+
+  if (type === "chunk" && dest.capabilities.receivesStreaming) {
+    chrome.runtime.sendMessage({ ...payload, _destination: id }).catch(() => {});
+  } else if (type === "complete" && dest.capabilities.receivesComplete) {
+    chrome.runtime.sendMessage({ ...payload, _destination: id }).catch(() => {});
+  } else if (type === "message") {
+    chrome.runtime.sendMessage({ ...payload, _destination: id }).catch(() => {});
+  }
+}
+
+function broadcastToAllDestinations(type, payload) {
+  const timestamp = Date.now();
+  console.log("[VIVIM:BG] 📤 broadcastToAllDestinations", { type, destinationCount: destinations.size, timestamp });
+  for (const [id] of destinations) {
+    broadcastToDestination(id, type, payload);
+  }
+  console.log("[VIVIM:BG] ✅ broadcast complete", { type, destinations: Array.from(destinations.keys()), timestamp });
+}
+
+registerDestination("sidepanel");
+
+// Tab Detection
 const isChatGPT = (url) => /^https:\/\/(chatgpt\.com|chat\.com)\//.test(url || "");
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (isChatGPT(changeInfo.url)) {
-    chatgptTabs.set(tabId, {
-      url: changeInfo.url,
-      title: tab.title || "ChatGPT",
-      detectedAt: Date.now(),
-    });
-    // Notify side panel
-    broadcastToSidePanel(tabId, {
-      type: "TAB_DETECTED",
-      platform: "chatgpt",
-      url: changeInfo.url,
-      tabId,
-    });
+    chatgptTabs.set(tabId, { url: changeInfo.url, title: tab.title || "ChatGPT", detectedAt: Date.now() });
+    broadcastToSidePanel(tabId, { type: "TAB_DETECTED", platform: "chatgpt", url: changeInfo.url, tabId });
   }
 });
 
@@ -40,85 +64,77 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
   const tab = await chrome.tabs.get(activeInfo.tabId).catch(() => null);
   if (tab && isChatGPT(tab.url)) {
     if (!chatgptTabs.has(tab.id)) {
-      chatgptTabs.set(tab.id, {
-        url: tab.url,
-        title: tab.title || "ChatGPT",
-        detectedAt: Date.now(),
-      });
+      chatgptTabs.set(tab.id, { url: tab.url, title: tab.title || "ChatGPT", detectedAt: Date.now() });
     }
   }
 });
 
-// ─── Message Routing ─────────────────────────────────────────────
-
+// Message Routing
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  // Extension pages (sidepanel, popup) have no sender.tab — they must pass tabId explicitly
   const tabId = message.tabId || sender.tab?.id;
-  console.log("[VIVIM BG] 📨 Message received:", message.type, "tabId:", tabId, "sender.tab:", sender.tab?.id);
+  const timestamp = Date.now();
 
   switch (message.type) {
     case "USER_PROMPT":
-      // Content script captured an outgoing user prompt
-      storeMessage(tabId, {
-        role: "user",
-        content: message.content,
+      console.log("[VIVIM:BG] 📥 USER_PROMPT received", { 
+        tabId, 
+        contentLength: message.content?.length, 
         conversationId: message.conversationId,
-        timestamp: Date.now(),
+        timestamp 
       });
-
-      // If conversationId is new, track it
+      storeMessage(tabId, { role: "user", content: message.content, conversationId: message.conversationId, timestamp });
       if (message.conversationId && !chatgptTabs.get(tabId)?.conversationId) {
         const info = chatgptTabs.get(tabId);
-        if (info) {
-          info.conversationId = message.conversationId;
-          chatgptTabs.set(tabId, info);
-        }
+        if (info) { info.conversationId = message.conversationId; chatgptTabs.set(tabId, info); }
       }
-
-      // Forward to side panel — include tabId in payload for sidepanel filtering
-      broadcastToSidePanel(tabId, {
-        type: "MESSAGE_ADDED",
-        role: "user",
-        content: message.content,
-        timestamp: Date.now(),
-        tabId,
+      broadcastToSidePanel(tabId, { type: "MESSAGE_ADDED", role: "user", content: message.content, timestamp, tabId });
+      console.log("[VIVIM:BG] 📤 MESSAGE_ADDED broadcast", { 
+        type: "MESSAGE_ADDED", 
+        role: "user", 
+        contentLength: message.content?.length,
+        timestamp,
+        tabId 
       });
       break;
 
     case "STREAM_CHUNK":
-      // SSE chunk from inject-web.js → content.js → here
-      console.log("[VIVIM BG] 📦 STREAM_CHUNK received:", {
-        tabId,
-        role: message.role,
-        contentLength: message.content?.length,
+      console.log("[VIVIM:BG] 📥 STREAM_CHUNK received", { 
+        tabId, 
+        seq: message.seq, 
+        contentLength: message.content?.length, 
         model: message.model,
-        contentPreview: message.content?.substring(0, 50)
+        timestamp 
       });
       handleStreamChunk(tabId, message);
       break;
 
-    case "STREAM_COMPLETE":
-      console.log("[VIVIM BG] ✅ STREAM_COMPLETE received, tabId:", tabId);
-      storeStreamedMessage(tabId);
-      broadcastToSidePanel(tabId, {
-        type: "STREAM_COMPLETE",
-        tabId,
-        timestamp: Date.now(),
+    case "STREAM_COMPLETE": {
+      console.log("[VIVIM:BG] 📥 STREAM_COMPLETE received", { 
+        tabId, 
+        streamId: message.streamId, 
+        timestamp: message.timestamp 
       });
+      const streamKey = "stream_" + tabId;
+      const streaming = streamingMessages.get(streamKey);
+      if (streaming && (!message.streamId || streaming.streamId === message.streamId)) {
+        storeStreamedMessage(tabId);
+        streamingMessages.delete(streamKey);
+        broadcastToSidePanel(tabId, { type: "STREAM_COMPLETE", tabId, timestamp });
+        console.log("[VIVIM:BG] 📤 STREAM_COMPLETE broadcast", { 
+          type: "STREAM_COMPLETE", 
+          tabId, 
+          timestamp 
+        });
+      }
       break;
+    }
 
     case "GET_CONVERSATION":
-      // Side panel requesting stored conversation
       const tabInfo = chatgptTabs.get(tabId);
-      chrome.storage.local.get(`conv_${tabId}`, (result) => {
-        const messages = result[`conv_${tabId}`] || [];
-        sendResponse({
-          messages,
-          conversationId: tabInfo?.conversationId || null,
-          url: tabInfo?.url || null,
-        });
+      chrome.storage.local.get("conv_" + tabId, (result) => {
+        sendResponse({ messages: result["conv_" + tabId] || [], conversationId: tabInfo?.conversationId || null, url: tabInfo?.url || null });
       });
-      return true; // Keep message channel open
+      return true;
 
     case "CLEAR_CONVERSATION":
       clearConversation(tabId);
@@ -128,150 +144,108 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     case "GET_TAB_STATUS":
       const info = chatgptTabs.get(tabId);
-      const isChatGPTPromise = info || /^https:\/\/(chatgpt\.com|chat\.com)\//.test(sender.tab?.url || "");
-      sendResponse({
-        isChatGPT: !!isChatGPTPromise,
-        conversationId: info?.conversationId || null,
-        platform: "chatgpt",
-      });
+      sendResponse({ isChatGPT: !!info, conversationId: info?.conversationId || null, platform: "chatgpt" });
       return true;
 
     case "SAVE_FROM_DOM":
-      broadcastToSidePanel(tabId, {
-        type: "SAVE_TRIGGERED",
-        timestamp: message.timestamp,
-        tabId,
-      });
+      broadcastToSidePanel(tabId, { type: "SAVE_TRIGGERED", timestamp: message.timestamp, tabId });
       break;
 
-    default:
-      break;
+    case "REGISTER_DESTINATION":
+      registerDestination(message.id, message.config);
+      sendResponse({ ok: true });
+      return true;
+
+    case "UNREGISTER_DESTINATION":
+      unregisterDestination(message.id);
+      sendResponse({ ok: true });
+      return true;
+
+    case "LIST_DESTINATIONS":
+      sendResponse({ destinations: Array.from(destinations.keys()) });
+      return true;
   }
 });
 
-// ─── Conversation Store (per tab) ────────────────────────────────
-
-// Streaming state: track partial assistant messages
-const streamingMessages = new Map(); // tabId -> { content, model, startTime }
+// Conversation Store
+const streamingMessages = new Map();
 
 function handleStreamChunk(tabId, message) {
-  const key = `stream_${tabId}`;
+  const key = "stream_" + tabId;
   let existing = streamingMessages.get(key);
 
   if (message.role === "assistant") {
-    if (!existing) {
-      existing = {
-        content: message.content,
-        model: message.model || "unknown",
-        startTime: Date.now(),
-        tabId,
-      };
+    const seq = message.seq || 0;
+    const streamId = message.streamId;
+
+    if (!existing || (streamId && existing.streamId !== streamId)) {
+      if (existing) {
+        storeStreamedMessage(tabId);
+      }
+      existing = { content: message.content, model: message.model || "unknown", startTime: Date.now(), tabId, lastSeq: seq, streamId };
       streamingMessages.set(key, existing);
     } else {
-      existing.content = message.content; // Full content (ChatGPT sends cumulative)
+      if (seq > existing.lastSeq) {
+        existing.content = message.content;
+        existing.lastSeq = seq;
+        if (message.model) existing.model = message.model;
+      }
     }
-
-    // Forward to side panel — include tabId in payload for sidepanel filtering
-    broadcastToSidePanel(tabId, {
-      type: "STREAM_UPDATE",
-      role: "assistant",
-      content: existing.content,
-      model: existing.model,
-      tabId,
-      timestamp: Date.now(),
-    });
-    console.log("[VIVIM BG] 📡 Broadcasting STREAM_UPDATE, tabId:", tabId, "length:", existing.content?.length);
+    broadcastToSidePanel(tabId, { type: "STREAM_UPDATE", role: "assistant", content: existing.content, model: existing.model, tabId, timestamp: Date.now(), seq: existing.lastSeq });
   }
 }
 
 function storeMessage(tabId, msg) {
-  const key = `conv_${tabId}`;
+  const key = "conv_" + tabId;
   chrome.storage.local.get(key, (result) => {
     const messages = result[key] || [];
-
-    // Check if there's a streaming assistant message to finalize
-    const streamKey = `stream_${tabId}`;
+    const streamKey = "stream_" + tabId;
     const streaming = streamingMessages.get(streamKey);
     if (streaming && msg.role === "user") {
-      // Finalize the previous streaming message
-      const finalized = {
-        role: "assistant",
-        content: streaming.content,
-        model: streaming.model,
-        timestamp: streaming.startTime,
-        streamed: true,
-      };
-
-      // Only add if content is different from last message
+      const finalized = { role: "assistant", content: streaming.content, model: streaming.model, timestamp: streaming.startTime, streamed: true };
       const lastMsg = messages[messages.length - 1];
-      if (!lastMsg || lastMsg.content !== finalized.content) {
-        messages.push(finalized);
-      }
+      if (!lastMsg || lastMsg.content !== finalized.content) { messages.push(finalized); }
       streamingMessages.delete(streamKey);
     }
-
     messages.push(msg);
-
-    // Keep only last 100 messages
     if (messages.length > 100) messages.splice(0, messages.length - 100);
-
     chrome.storage.local.set({ [key]: messages });
   });
 }
 
 function clearConversation(tabId) {
-  const key = `conv_${tabId}`;
+  const key = "conv_" + tabId;
   chrome.storage.local.remove(key);
-  streamingMessages.delete(`stream_${tabId}`);
+  streamingMessages.delete("stream_" + tabId);
 }
 
-// Persist the current streaming message to storage when stream ends
 function storeStreamedMessage(tabId) {
-  const streamKey = `stream_${tabId}`;
+  const streamKey = "stream_" + tabId;
   const streaming = streamingMessages.get(streamKey);
   if (!streaming) return;
 
-  // Fix #11: delete from streamingMessages BEFORE async call to prevent double-store race
   streamingMessages.delete(streamKey);
-
-  const key = `conv_${tabId}`;
+  const key = "conv_" + tabId;
   chrome.storage.local.get(key, (result) => {
     const messages = result[key] || [];
-    messages.push({
-      role: "assistant",
-      content: streaming.content,
-      model: streaming.model,
-      timestamp: streaming.startTime,
-      streamed: true,
-    });
+    messages.push({ role: "assistant", content: streaming.content, model: streaming.model, timestamp: streaming.startTime, streamed: true });
     if (messages.length > 100) messages.splice(0, messages.length - 100);
     chrome.storage.local.set({ [key]: messages });
   });
 }
 
-// ─── Side Panel Communication ────────────────────────────────────
-
+// Side Panel Communication
 function broadcastToSidePanel(tabId, message) {
-  console.log("[VIVIM BG] 📢 Broadcasting:", message.type, "tabId:", tabId, "payload:", message);
-  chrome.runtime.sendMessage(message).catch(() => {
-    // Side panel may not be open — that's OK
-  });
+  broadcastToAllDestinations("message", message);
 }
 
-// ─── Side Panel Setup ────────────────────────────────────────────
-
-// Open side panel when action icon is clicked
+// Side Panel Setup
 chrome.action.onClicked.addListener((tab) => {
   if (/^https:\/\/(chatgpt\.com|chat\.com)\//.test(tab.url || "")) {
     chrome.sidePanel.open({ tabId: tab.id });
   }
 });
 
-// Register side panel for all ChatGPT tabs
-chrome.sidePanel.setOptions({
-  enabled: true,
-  path: "sidepanel.html",
-});
+chrome.sidePanel.setOptions({ enabled: true, path: "sidepanel.html" });
 
-// ─── Logging ─────────────────────────────────────────────────────
 console.log("[VIVIM POC] Background service worker initialized");

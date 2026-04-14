@@ -1,0 +1,14 @@
+{
+  "name": "vivim-poc",
+  "version": "0.0.1",
+  "description": "VIVIM POC — Multi-Provider Chat Mirroring",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "dev": "node build.mjs --watch",
+    "clean": "rm -rf dist"
+  },
+  "devDependencies": {
+    "esbuild": "^0.20.0"
+  }
+}

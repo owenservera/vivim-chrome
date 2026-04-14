@@ -284,7 +284,14 @@
           <rect width="20" height="20" rx="4" fill="#6C5CE7"/>
           <text x="10" y="15" text-anchor="middle" fill="white" font-size="12" font-weight="bold">V</text>
         </svg>
-        <span>VIVIM POC</span>
+        <span>VIVIM</span>
+      </div>
+      <div class="sidepanel__header__controls">
+        <button class="header-btn" id="providerSelect" title="Select provider">
+          <span class="provider-dot" id="providerDot"></span>
+          <span id="providerName">ChatGPT</span>
+        </button>
+        <button class="header-btn" id="exportBtn" title="Export">📥</button>
       </div>
       <div class="sidepanel__header__status">
         <span class="status-dot" id="statusDot"></span>
@@ -292,12 +299,17 @@
       </div>
     </div>
 
+    <!-- Toolbar -->
+    <div class="sidepanel__toolbar">
+      <input type="text" id="searchInput" placeholder="Search messages..." class="toolbar-search">
+    </div>
+
     <!-- Messages Area -->
     <div class="sidepanel__messages" id="messagesArea">
       <div class="empty-state" id="emptyState">
         <div class="empty-state__icon">💬</div>
         <div class="empty-state__title">No messages yet</div>
-        <div class="empty-state__desc">Type a prompt below or start chatting on ChatGPT</div>
+        <div class="empty-state__desc">Type a prompt below or start chatting</div>
       </div>
     </div>
 
@@ -308,15 +320,39 @@
         placeholder="Type your prompt..."
         rows="1"
       ></textarea>
-      <button id="sendBtn" title="Send prompt" disabled>▶</button>
+      <button id="sendBtn" type="button" title="Send (Cmd+Enter)" disabled>▶</button>
     </div>
 
     <!-- Status Bar -->
     <div class="sidepanel__status">
       <span id="msgCount">0 messages</span>
-      <button id="clearBtn" title="Clear conversation">Clear</button>
+      <button id="clearBtn" type="button" title="Clear conversation">Clear</button>
     </div>
   </div>
+
+  <style>
+    .sidepanel__header__controls { display: flex; gap: 8px; align-items: center; }
+    .header-btn { background: var(--bg-secondary); border: 1px solid var(--border-primary); border-radius: 6px; padding: 4px 8px; color: var(--text-primary); cursor: pointer; display: flex; align-items: center; gap: 6px; font-size: 12px; }
+    .header-btn:hover { background: var(--bg-hover); }
+    .provider-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--vivim-primary); }
+    .sidepanel__toolbar { padding: 8px 12px; border-bottom: 1px solid var(--border-primary); display: flex; }
+    .toolbar-search { flex: 1; background: var(--bg-secondary); border: 1px solid var(--border-primary); border-radius: 6px; padding: 6px 10px; color: var(--text-primary); font-size: 12px; }
+    .toolbar-search:focus { border-color: var(--vivim-primary); outline: none; }
+    .toolbar-search::placeholder { color: var(--text-tertiary); }
+    .msg__actions { position: absolute; top: 4px; right: 4px; display: flex; gap: 4px; }
+    .msg { position: relative; }
+    .msg__action { background: var(--bg-tertiary); border: none; border-radius: 4px; padding: 4px 6px; cursor: pointer; font-size: 12px; opacity: 0.7; }
+    .msg__action:hover { opacity: 1; background: var(--bg-hover); }
+    .export-menu { position: absolute; right: 60px; top: 48px; background: var(--bg-elevated); border: 1px solid var(--border-primary); border-radius: 8px; padding: 4px; z-index: 100; display: flex; flex-direction: column; }
+    .export-menu button { background: none; border: none; color: var(--text-primary); padding: 8px 16px; text-align: left; cursor: pointer; font-size: 12px; border-radius: 4px; }
+    .export-menu button:hover { background: var(--bg-hover); }
+    .provider-menu { position: absolute; right: 12px; top: 48px; background: var(--bg-elevated); border: 1px solid var(--border-primary); border-radius: 8px; padding: 4px; z-index: 100; max-height: 200px; overflow-y: auto; }
+    .provider-option { display: flex; align-items: center; gap: 8px; background: none; border: none; color: var(--text-primary); padding: 8px 12px; text-align: left; cursor: pointer; font-size: 12px; width: 100%; }
+    .provider-option:hover { background: var(--bg-hover); }
+    .provider-option .provider-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+    .toast { position: fixed; bottom: 60px; left: 50%; transform: translateX(-50%); background: var(--vivim-primary); color: white; padding: 8px 16px; border-radius: 6px; font-size: 12px; z-index: 1000; animation: fadeIn 0.2s; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateX(-50%) translateY(10px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
+  </style>
 
   <script src="sidepanel.js"></script>
 </body>
