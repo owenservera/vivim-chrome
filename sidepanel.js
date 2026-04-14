@@ -50,6 +50,7 @@
   const providerSelect = document.getElementById("providerSelect");
   const providerName = document.getElementById("providerName");
   const exportBtn = document.getElementById("exportBtn");
+  const privacyBtn = document.getElementById("privacyBtn");
   const searchInput = document.getElementById("searchInput");
 
   // ═══════════════════════════════════════════════════
@@ -60,14 +61,21 @@
   let currentProvider = PROVIDERS.chatgpt;
   let manualProvider = null;
   let messageList = [];
-  let isStreaming = false;
   let streamingMsgEl = null;
   let lastStreamedSeq = 0;
   let searchQuery = "";
 
-  // ─── Init ───
+  // ─── Initialization ───
   function init() {
-    // Get current tab
+    console.log("[VIVIM:SP] Initializing side panel...");
+    
+    // UI sub-initializers
+initExport();
+  initSearch();
+  initProviderSelect();
+  initPrivacy();
+
+    // Get current tab on startup
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       if (tabs[0]) {
         currentTabId = tabs[0].id;
@@ -76,25 +84,25 @@
       }
     });
 
-    // Listen for messages from content script (via background)
+    // Listen for background messages
     chrome.runtime.onMessage.addListener(handleBackgroundMessage);
 
-    // Listen for tab activation — update currentTabId on tab switch
+    // Track tab switches
     chrome.tabs.onActivated.addListener((activeInfo) => {
       currentTabId = activeInfo.tabId;
-      streamingMsgEl = null; // clean up any live streaming element
-      lastStreamedSeq = 0; // reset sequence tracker
+      streamingMsgEl = null;
+      lastStreamedSeq = 0;
       loadConversation();
       checkTabStatus();
     });
 
-    // Input handling
+    // Input event listeners
     promptInput.addEventListener("input", onInputChange);
     promptInput.addEventListener("keydown", onInputKeyDown);
     sendBtn.addEventListener("click", sendPrompt);
     clearBtn.addEventListener("click", clearConversation);
 
-    setStatus("disconnected", "No ChatGPT tab");
+    setStatus("disconnected", "Ready");
   }
 
   function checkTabStatus() {
@@ -113,12 +121,8 @@
   }
 
   function updateProviderDisplay(provider) {
-    if (providerName) {
-      providerName.textContent = provider.name;
-    }
-    if (providerSelect) {
-      providerSelect.style.background = provider.color;
-    }
+    if (providerName) providerName.textContent = provider.name;
+    if (providerSelect) providerSelect.style.background = provider.color;
     statusDot.style.setProperty("--provider-color", provider.color);
   }
 
@@ -129,106 +133,66 @@
     statusText.textContent = label;
   }
 
-  // ─── Conversation Load ───
+  // ─── Data Management ───
   function loadConversation() {
+    if (!currentTabId) return;
     chrome.runtime.sendMessage({ type: "GET_CONVERSATION", tabId: currentTabId }, (response) => {
       if (chrome.runtime.lastError) return;
-      if (response?.messages?.length > 0) {
+      if (response && response.messages) {
         messageList = response.messages;
         renderAllMessages();
       }
     });
   }
 
-  // ─── Background Messages ───
   function handleBackgroundMessage(msg) {
-    const timestamp = Date.now();
-    console.log("[VIVIM:SP] 📨 Background message received", { 
-      type: msg.type, 
-      currentTabId, 
-      msgTabId: msg.tabId,
-      timestamp 
-    });
-
-    // Only process messages relevant to the currently tracked tab
-    if (msg.tabId && msg.tabId !== currentTabId) {
-      console.log("[VIVIM:SP] ⏭️ Ignoring message for different tab", { 
-        msgTabId: msg.tabId, 
-        currentTabId,
-        msgType: msg.type 
-      });
-      return;
-    }
+    // Only process messages for the currently active tab
+    if (msg.tabId && msg.tabId !== currentTabId) return;
 
     switch (msg.type) {
       case "MESSAGE_ADDED":
-        console.log("[VIVIM:SP] 📥 MESSAGE_ADDED received", { 
-          role: msg.role, 
-          contentLength: msg.content?.length,
-          contentPreview: msg.content?.slice(0, 50),
-          timestamp 
-        });
-        addMessage(msg.role, msg.content, null, msg.timestamp);
-        console.log("[VIVIM:SP] ✅ MESSAGE_ADDED rendered", { role: msg.role, messageCount: messageList.length });
+        addMessage(msg.role, msg.content, msg.model, msg.timestamp);
         break;
 
       case "STREAM_UPDATE":
-        console.log("[VIVIM:SP] 📥 STREAM_UPDATE received", { 
-          contentLength: msg.content?.length, 
-          seq: msg.seq, 
-          model: msg.model,
-          timestamp 
-        });
         updateStreamingMessage(msg.content, msg.model, msg.seq);
-        console.log("[VIVIM:SP] ✅ STREAM_UPDATE rendered", { seq: msg.seq, contentLength: msg.content?.length });
         break;
 
       case "STREAM_COMPLETE":
-        console.log("[VIVIM:SP] 📥 STREAM_COMPLETE received", { 
-          timestamp: msg.timestamp,
-          totalMessages: messageList.length 
-        });
         finalizeStreamingMessage();
-        console.log("[VIVIM:SP] ✅ STREAM_COMPLETE finalized", { messageCount: messageList.length });
         break;
 
       case "CONVERSATION_CLEARED":
         messageList = [];
-        messagesArea.innerHTML = "";
-        messagesArea.appendChild(emptyState);
-        emptyState.classList.remove("hidden");
-        streamingMsgEl = null;
-        lastStreamedSeq = 0;
-        updateMsgCount();
-        console.log("[VIVIM:SP] ✅ CONVERSATION_CLEARED", { timestamp });
+        renderAllMessages();
         break;
 
       case "TAB_DETECTED":
-        if (msg.platform === "chatgpt") {
-          const domain = msg.url?.includes("chat.com") ? "Chat" : "ChatGPT";
-          setStatus("connected", `${domain} detected`);
-          console.log("[VIVIM:SP] ✅ TAB_DETECTED", { platform: msg.platform, url: msg.url?.slice(0, 50) });
-        }
+        checkTabStatus();
         break;
 
       case "SAVE_TRIGGERED":
-        console.log("[VIVIM:SP] 📥 SAVE_TRIGGERED", { timestamp: msg.timestamp });
+        showToast("Conversation saved");
         break;
     }
   }
 
-  // ─── Render Messages ───
+  // ─── Rendering ───
   function renderAllMessages() {
     messagesArea.innerHTML = "";
-    messagesArea.appendChild(emptyState);
+    
+    // Filter messages if search query exists
+    const filtered = searchQuery 
+      ? messageList.filter(m => m.content.toLowerCase().includes(searchQuery.toLowerCase()))
+      : messageList;
 
-    if (messageList.length === 0) {
+    if (filtered.length === 0) {
+      messagesArea.appendChild(emptyState);
       emptyState.classList.remove("hidden");
     } else {
       emptyState.classList.add("hidden");
-      messageList.forEach((msg) => {
-        const el = createMessageEl(msg.role, msg.content, msg.model, msg.timestamp);
-        messagesArea.appendChild(el);
+      filtered.forEach((msg, idx) => {
+        messagesArea.appendChild(createMessageEl(msg.role, msg.content, msg.model, msg.timestamp, idx));
       });
     }
 
@@ -237,14 +201,8 @@
   }
 
   function addMessage(role, content, model, timestamp) {
-    emptyState.classList.add("hidden");
-
-    const el = createMessageEl(role, content, model, timestamp);
-    messagesArea.appendChild(el);
-
     messageList.push({ role, content, model, timestamp: timestamp || Date.now() });
-    updateMsgCount();
-    scrollToBottom();
+    renderAllMessages();
   }
 
   function createMessageEl(role, content, model, timestamp, index) {
@@ -257,312 +215,310 @@
     contentEl.innerHTML = renderMarkdown(content);
     el.appendChild(contentEl);
 
-    if (model || timestamp) {
-      const metaEl = document.createElement("div");
-      metaEl.className = "msg__meta";
-
-      if (model) {
-        const modelSpan = document.createElement("span");
-        modelSpan.className = "msg__model";
-        modelSpan.textContent = model;
-        metaEl.appendChild(modelSpan);
-      }
-
-      if (timestamp) {
-        const timeSpan = document.createElement("span");
-        timeSpan.textContent = formatTime(timestamp);
-        metaEl.appendChild(timeSpan);
-      }
-
-      el.appendChild(metaEl);
+    const metaEl = document.createElement("div");
+    metaEl.className = "msg__meta";
+    
+    if (model) {
+      const modelSpan = document.createElement("span");
+      modelSpan.className = "msg__model";
+      modelSpan.textContent = model;
+      metaEl.appendChild(modelSpan);
     }
 
+    if (timestamp) {
+      const timeSpan = document.createElement("span");
+      timeSpan.textContent = formatTime(timestamp);
+      metaEl.appendChild(timeSpan);
+    }
+    el.appendChild(metaEl);
+
+    // Actions (Copy, Delete, etc)
     const actionsEl = document.createElement("div");
     actionsEl.className = "msg__actions hidden";
-
-    const copyBtn = document.createElement("button");
-    copyBtn.className = "msg__action";
-    copyBtn.innerHTML = "📋";
-    copyBtn.title = "Copy message";
-    copyBtn.onclick = (e) => { e.stopPropagation(); copyMessage(content); };
-
-    const retryBtn = document.createElement("button");
-    retryBtn.className = "msg__action";
-    retryBtn.innerHTML = "↩️";
-    retryBtn.title = "Retry";
-    retryBtn.onclick = (e) => { e.stopPropagation(); retryMessage(index); };
-
-    const deleteBtn = document.createElement("button");
-    deleteBtn.className = "msg__action";
-    deleteBtn.innerHTML = "🗑️";
-    deleteBtn.title = "Delete";
-    deleteBtn.onclick = (e) => { e.stopPropagation(); deleteMessage(index); };
-
+    
+    const copyBtn = createActionButton("📋", "Copy", () => copyToClipboard(content));
     actionsEl.appendChild(copyBtn);
-    if (role === "user") actionsEl.appendChild(retryBtn);
+
+    if (role === "user") {
+      const retryBtn = createActionButton("↩️", "Reuse", () => {
+        promptInput.value = content;
+        onInputChange();
+        promptInput.focus();
+      });
+      actionsEl.appendChild(retryBtn);
+    }
+
+    const deleteBtn = createActionButton("🗑️", "Delete", () => {
+      messageList.splice(index, 1);
+      renderAllMessages();
+    });
     actionsEl.appendChild(deleteBtn);
 
     el.appendChild(actionsEl);
-
-    el.addEventListener("mouseenter", () => actionsEl.classList.remove("hidden"));
-    el.addEventListener("mouseleave", () => actionsEl.classList.add("hidden"));
+    el.onmouseenter = () => actionsEl.classList.remove("hidden");
+    el.onmouseleave = () => actionsEl.classList.add("hidden");
 
     return el;
   }
 
+  function createActionButton(icon, title, onClick) {
+    const btn = document.createElement("button");
+    btn.className = "msg__action";
+    btn.innerHTML = icon;
+    btn.title = title;
+    btn.onclick = (e) => { e.stopPropagation(); onClick(); };
+    return btn;
+  }
+
   function renderMarkdown(text) {
     if (!text) return "";
+    
+    // 1. Escape HTML
     let html = text
       .replace(/&/g, "&amp;")
       .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code class="language-$1">$2</code></pre>')
-      .replace(/`([^`]+)`/g, '<code>$1</code>')
-      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-      .replace(/\*([^*]+)\*/g, '<em>$1</em>')
-      .replace(/^### (.+)$/gm, '<h3>$1</h3>')
-      .replace(/^## (.+)$/gm, '<h2>$1</h2>')
-      .replace(/^# (.+)$/gm, '<h1>$1</h1>')
-      .replace(/^- (.+)$/gm, '<li>$1</li>')
-      .replace(/^(\d+)\. (.+)$/gm, '<li>$2</li>')
-      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>')
-      .replace(/\n\n/g, "</p><p>")
-      .replace(/\n/g, "<br>");
-    return `<p>${html}</p>`;
-  }
+      .replace(/>/g, "&gt;");
 
-  async function copyMessage(content) {
-    try {
-      await navigator.clipboard.writeText(content);
-      showToast("Message copied!");
-    } catch {}
-  }
+    // 2. Code blocks (handle triple backticks)
+    html = html.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>');
 
-  function retryMessage(index) {
-    const msg = messageList[index];
-    if (msg && msg.role === "user") {
-      promptInput.value = msg.content;
-      promptInput.dispatchEvent(new Event("input"));
-      promptInput.focus();
+    // 3. Inline code
+    html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+    // 4. Bold and Italic
+    html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+
+    // 5. Headers
+    html = html.replace(/^### (.*$)/gm, '<h3>$1</h3>');
+    html = html.replace(/^## (.*$)/gm, '<h2>$1</h2>');
+    html = html.replace(/^# (.*$)/gm, '<h1>$1</h1>');
+
+    const parts = html.split(/(<pre>[\s\S]*?<\/pre>)/);
+    for (let i = 0; i < parts.length; i++) {
+      if (!parts[i].startsWith('<pre>')) {
+        parts[i] = parts[i].replace(/\n/g, '<br>');
+      }
     }
+    return parts.join('');
   }
 
-  function deleteMessage(index) {
-    messageList.splice(index, 1);
-    renderAllMessages();
-    showToast("Message deleted");
-  }
 
-  function showToast(text) {
-    const existing = document.querySelector(".toast");
-    if (existing) existing.remove();
-    const toast = document.createElement("div");
-    toast.className = "toast";
-    toast.textContent = text;
-    document.body.appendChild(toast);
-    setTimeout(() => toast.remove(), 2000);
-  }
-
-  // ─── Streaming Message ───
   function updateStreamingMessage(content, model, seq) {
-    // Only update if this is a newer chunk (prevents out-of-order rendering)
-    if (seq !== undefined && seq <= lastStreamedSeq) {
-      console.log("[VIVIM POC] ⏭️ Skipping stale update, seq:", seq, "lastSeq:", lastStreamedSeq);
-      return;
-    }
-
-    if (seq !== undefined) {
-      lastStreamedSeq = seq;
-    }
+    if (seq !== undefined && seq <= lastStreamedSeq) return;
+    if (seq !== undefined) lastStreamedSeq = seq;
 
     if (!streamingMsgEl) {
-      // Create new streaming message
+      setStatus("streaming", "Streaming...");
       emptyState.classList.add("hidden");
       streamingMsgEl = document.createElement("div");
       streamingMsgEl.className = "msg msg--assistant msg--streaming";
-
+      
       const contentEl = document.createElement("div");
       contentEl.className = "msg__content";
-      contentEl.textContent = content;
       streamingMsgEl.appendChild(contentEl);
-
-      if (model) {
-        const metaEl = document.createElement("div");
-        metaEl.className = "msg__meta";
-        const modelSpan = document.createElement("span");
-        modelSpan.className = "msg__model";
-        modelSpan.textContent = model;
-        metaEl.appendChild(modelSpan);
-        streamingMsgEl.appendChild(metaEl);
-      }
-
+      
+      const metaEl = document.createElement("div");
+      metaEl.className = "msg__meta";
+      streamingMsgEl.appendChild(metaEl);
+      
       messagesArea.appendChild(streamingMsgEl);
-      setStatus("streaming", "Streaming...");
-    } else {
-      // Update existing — always replace with full cumulative content
-      const contentEl = streamingMsgEl.querySelector(".msg__content");
-      if (contentEl) {
-        contentEl.textContent = content;
-        console.log("[VIVIM POC] 🔄 Updated streaming message, length:", content.length, "seq:", seq);
-      }
     }
 
+    const contentEl = streamingMsgEl.querySelector(".msg__content");
+    const metaEl = streamingMsgEl.querySelector(".msg__meta");
+    
+    if (contentEl) contentEl.textContent = content; // Raw text during stream
+    if (metaEl && model) metaEl.textContent = model;
+    
     scrollToBottom();
   }
 
   function finalizeStreamingMessage() {
-    if (streamingMsgEl) {
-      streamingMsgEl.classList.remove("msg--streaming");
-
-      // Extract content from the streaming element
-      const content = streamingMsgEl.querySelector(".msg__content")?.textContent || "";
-      const model = streamingMsgEl.querySelector(".msg__model")?.textContent || "";
-
-      console.log("[VIVIM POC] ✅ Finalized streaming message, length:", content.length, "final seq:", lastStreamedSeq);
-
-      // Add to message list
-      messageList.push({
-        role: "assistant",
-        content,
-        model,
-        timestamp: Date.now(),
-        streamed: true,
-      });
-
-      streamingMsgEl = null;
-      lastStreamedSeq = 0; // Reset for next stream
-      updateMsgCount();
-    }
-
-    setStatus("connected", "ChatGPT active");
+    if (!streamingMsgEl) return;
+    
+    const content = streamingMsgEl.querySelector(".msg__content")?.textContent || "";
+    const model = streamingMsgEl.querySelector(".msg__meta")?.textContent || "";
+    
+    streamingMsgEl.remove();
+    streamingMsgEl = null;
+    lastStreamedSeq = 0;
+    
+    addMessage("assistant", content, model, Date.now());
+    setStatus("connected", (currentProvider?.name || "AI") + " active");
   }
 
-  // ─── Send Prompt ───
+  // ─── User Actions ───
   async function sendPrompt() {
     const text = promptInput.value.trim();
     if (!text || !currentTabId) return;
 
-    // Clear input
     promptInput.value = "";
-    sendBtn.disabled = true;
-    promptInput.style.height = "42px";
-
-    // Optimistically show user message
-    addMessage("user", text, null, Date.now());
+    onInputChange();
 
     try {
-      const results = await chrome.scripting.executeScript({
+      await chrome.scripting.executeScript({
         target: { tabId: currentTabId },
-        func: injectPromptIntoChatGPT,
-        args: [text],
+        func: (val) => {
+          const area = document.querySelector("form #prompt-textarea");
+          if (!area) return;
+          
+          // Inject text into ChatGPT's editor
+          const p = area.querySelector("p");
+          if (p) {
+            p.textContent = val;
+          } else {
+            area.value = val;
+          }
+          
+          area.dispatchEvent(new Event("input", { bubbles: true }));
+          area.focus();
+          
+          setTimeout(() => {
+            const enter = new KeyboardEvent("keydown", { bubbles: true, key: "Enter", code: "Enter", keyCode: 13 });
+            area.dispatchEvent(enter);
+          }, 200);
+        },
+        args: [text]
       });
-      console.log("[VIVIM POC] ✅ Script injected, result:", results);
-    } catch (e) {
-      console.error("[VIVIM POC] ❌ Failed to inject prompt:", e);
-      sendBtn.disabled = false;
+    } catch (err) {
+      console.error("[VIVIM:SP] Send failed:", err);
     }
   }
 
-  // This function runs IN THE PAGE CONTEXT (ChatGPT tab)
-  // It must be fully self-contained — no closures, no imports.
-  function injectPromptIntoChatGPT(prompt) {
-    console.log("[VIVIM POC inject] 🔍 Injecting prompt:", prompt.substring(0, 30));
+  function clearConversation() {
+    if (!confirm("Clear this conversation?")) return;
+    chrome.runtime.sendMessage({ type: "CLEAR_CONVERSATION", tabId: currentTabId });
+  }
 
-    const el = document.querySelector("form #prompt-textarea");
-    if (!el) {
-      console.error("[VIVIM POC inject] ❌ prompt-textarea not found");
-      return { success: false };
-    }
+  // ─── Feature Initializers ───
+  function initExport() {
+    if (!exportBtn) return;
+    exportBtn.onclick = (e) => {
+      e.stopPropagation();
+      const existing = document.querySelector(".export-menu");
+      if (existing) return existing.remove();
 
-    console.log("[VIVIM POC inject] ✅ Found textarea");
+      const menu = document.createElement("div");
+      menu.className = "export-menu";
+      
+      const createItem = (label, fn) => {
+        const b = document.createElement("button");
+        b.textContent = label;
+        b.onclick = () => { fn(); menu.remove(); };
+        return b;
+      };
 
-    // Replace the inner <p> content (ChatGPT's structure)
-    const oldP = el.querySelector("p");
-    if (oldP) {
-      const text = document.createTextNode(prompt);
-      const newP = document.createElement("p");
-      newP.appendChild(text);
-      oldP.replaceWith(newP);
-    } else {
-      // Fallback: set value directly
-      try {
-        const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
-        setter.call(el, prompt);
-      } catch (e) {
-        el.value = prompt;
+      menu.appendChild(createItem("📄 Export JSON", () => downloadFile(JSON.stringify(messageList, null, 2), "vivim-chat.json", "application/json")));
+      menu.appendChild(createItem("📝 Export Markdown", () => {
+        const md = messageList.map(m => `### ${m.role.toUpperCase()}\n\n${m.content}\n\n`).join("---\n\n");
+        downloadFile(md, "vivim-chat.md", "text/markdown");
+      }));
+
+      exportBtn.parentElement.appendChild(menu);
+    };
+  }
+
+  function initSearch() {
+    if (!searchInput) return;
+    searchInput.oninput = (e) => {
+      searchQuery = e.target.value;
+      renderAllMessages();
+    };
+  }
+
+  function initProviderSelect() {
+    if (!providerSelect) return;
+    providerSelect.onclick = (e) => {
+      e.stopPropagation();
+      const existing = document.querySelector(".provider-menu");
+      if (existing) return existing.remove();
+
+      const menu = document.createElement("div");
+      menu.className = "provider-menu";
+      
+      Object.values(PROVIDERS).forEach(p => {
+        const opt = document.createElement("button");
+        opt.className = "provider-option";
+        opt.innerHTML = `<span class="provider-dot" style="background:${p.color}"></span>${p.name}`;
+        opt.onclick = () => {
+          manualProvider = p;
+          checkTabStatus();
+          menu.remove();
+        };
+        menu.appendChild(opt);
+      });
+      providerSelect.parentElement.appendChild(menu);
+    };
+  }
+
+  function initPrivacy() {
+    if (!privacyBtn) return;
+    privacyBtn.onclick = async (e) => {
+      e.stopPropagation();
+      
+      if (e.target.disabled) return;
+      e.target.disabled = true;
+      
+      async function loadScripts() {
+        if (typeof VIVIMTelemetry === 'undefined') {
+          await new Promise((resolve, reject) => {
+            const s1 = document.createElement('script');
+            s1.src = 'telemetry.js';
+            s1.onload = resolve;
+            s1.onerror = reject;
+            document.head.appendChild(s1);
+          });
+        }
+        
+        if (typeof window.VIVIMPrivacyDashboard === 'undefined') {
+          await new Promise((resolve, reject) => {
+            const s2 = document.createElement('script');
+            s2.src = 'telemetry-dashboard.js';
+            s2.onload = resolve;
+            s2.onerror = reject;
+            document.head.appendChild(s2);
+          });
+        }
       }
-    }
-
-    // Dispatch input event
-    el.dispatchEvent(new Event("input", { bubbles: true }));
-
-    // Focus and then press Enter
-    el.focus();
-
-    setTimeout(() => {
-      const enterEvent = new KeyboardEvent("keydown", {
-        bubbles: true,
-        cancelable: true,
-        key: "Enter",
-        code: "Enter",
-        which: 13,
-      });
-      el.dispatchEvent(enterEvent);
-      console.log("[VIVIM POC inject] ✅ Enter key dispatched");
-    }, 500);
-
-    return { success: true };
+      
+      try {
+        await loadScripts();
+        const wrapper = document.createElement('div');
+        wrapper.style.cssText = 'position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:9999;background:rgba(0,0,0,0.5);';
+        wrapper.onclick = (ev) => { if (ev.target === wrapper) wrapper.remove(); };
+        
+        const container = document.createElement('div');
+        container.id = 'privacy-dashboard-container';
+        wrapper.appendChild(container);
+        document.body.appendChild(wrapper);
+        
+        VIVIMTelemetry.init().then(() => {
+          new window.VIVIMPrivacyDashboard(container, VIVIMTelemetry);
+        });
+      } catch (err) {
+        console.error('Failed to load privacy dashboard:', err);
+        e.target.disabled = false;
+      }
+    };
   }
 
-  // ─── Input Handling ───
+  // ─── Utilities ───
   function onInputChange() {
-    const hasText = promptInput.value.trim().length > 0;
-    sendBtn.disabled = !hasText;
-
-    // Auto-resize textarea (max 120px)
+    sendBtn.disabled = !promptInput.value.trim();
     promptInput.style.height = "42px";
-    promptInput.style.height = Math.min(promptInput.scrollHeight, 120) + "px";
+    promptInput.style.height = Math.min(promptInput.scrollHeight, 150) + "px";
   }
 
   function onInputKeyDown(e) {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      if (promptInput.value.trim()) {
-        sendPrompt();
-      }
+      sendPrompt();
     }
   }
 
-  // ─── Clear ───
-  function clearConversation() {
-    messageList = [];
-    messagesArea.innerHTML = "";
-    messagesArea.appendChild(emptyState);
-    emptyState.classList.remove("hidden");
-    updateMsgCount();
-
-    // Fix #1: include tabId so background resolves correct storage key
-    chrome.runtime.sendMessage({ type: "CLEAR_CONVERSATION", tabId: currentTabId });
-
-    // Also trigger in page context
-    if (currentTabId) {
-      chrome.scripting.executeScript({
-        target: { tabId: currentTabId },
-        func: () => {
-          // Navigate to new conversation
-          if (window.location.hostname === "chat.com") {
-            window.location.href = "https://chat.com/";
-          } else {
-            window.location.href = "https://chatgpt.com/";
-          }
-        },
-      });
-    }
-  }
-
-  // ─── Helpers ───
   function updateMsgCount() {
-    msgCount.textContent = `${messageList.length} message${messageList.length !== 1 ? "s" : ""}`;
+    if (msgCount) msgCount.textContent = `${messageList.length} messages`;
   }
 
   function scrollToBottom() {
@@ -571,147 +527,33 @@
     });
   }
 
-function formatTime(ts) {
-    const d = new Date(ts);
-    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  function formatTime(ts) {
+    return new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   }
 
-  function initExport() {
-    if (exportBtn) {
-      exportBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        showExportMenu();
-      });
-    }
+  function copyToClipboard(text) {
+    navigator.clipboard.writeText(text).then(() => showToast("Copied to clipboard"));
   }
 
-  function showExportMenu() {
-    const existing = document.querySelector(".export-menu");
-    if (existing) { existing.remove(); return; }
-
-    const menu = document.createElement("div");
-    menu.className = "export-menu";
-
-    const jsonBtn = document.createElement("button");
-    jsonBtn.textContent = "📄 Export JSON";
-    jsonBtn.onclick = () => exportJSON();
-
-    const mdBtn = document.createElement("button");
-    mdBtn.textContent = "📝 Export Markdown";
-    mdBtn.onclick = () => exportMarkdown();
-
-    const txtBtn = document.createElement("button");
-    txtBtn.textContent = "📃 Export Plain Text";
-    txtBtn.onclick = () => exportPlainText();
-
-    menu.appendChild(jsonBtn);
-    menu.appendChild(mdBtn);
-    menu.appendChild(txtBtn);
-    exportBtn.parentElement.appendChild(menu);
+  function showToast(text) {
+    const t = document.createElement("div");
+    t.className = "toast";
+    t.textContent = text;
+    document.body.appendChild(t);
+    setTimeout(() => t.remove(), 2500);
   }
 
-  function exportJSON() {
-    const data = JSON.stringify(messageList, null, 2);
-    downloadFile(data, "vivim-export.json", "application/json");
-    document.querySelector(".export-menu")?.remove();
-    showToast("JSON exported");
-  }
-
-  function exportMarkdown() {
-    let md = "# VIVIM Conversation\n\n";
-    messageList.forEach((msg, i) => {
-      const label = msg.role === "user" ? "**User**" : "**Assistant**";
-      const model = msg.model ? ` *(${msg.model})*` : "";
-      const time = new Date(msg.timestamp).toLocaleString();
-      md += `${label}${model} — ${time}\n\n${msg.content}\n\n---\n\n`;
-    });
-    downloadFile(md, "vivim-export.md", "text/markdown");
-    document.querySelector(".export-menu")?.remove();
-    showToast("Markdown exported");
-  }
-
-  function exportPlainText() {
-    let txt = "";
-    messageList.forEach(msg => {
-      const label = msg.role === "user" ? "User:" : "Assistant:";
-      txt += `${label} ${msg.content}\n\n`;
-    });
-    downloadFile(txt, "vivim-export.txt", "text/plain");
-    document.querySelector(".export-menu")?.remove();
-    showToast("Text exported");
-  }
-
-  function downloadFile(content, filename, type) {
+  function downloadFile(content, name, type) {
     const blob = new Blob([content], { type });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = filename;
+    a.download = name;
     a.click();
     URL.revokeObjectURL(url);
   }
 
-  function initSearch() {
-    if (searchInput) {
-      searchInput.addEventListener("input", (e) => {
-        searchQuery = e.target.value;
-        renderAllMessages();
-      });
-    }
-  }
+  // Start!
+  init();
 
-  function initProviderSelect() {
-    if (providerSelect) {
-      providerSelect.addEventListener("click", showProviderMenu);
-    }
-  }
-
-  function showProviderMenu() {
-    const existing = document.querySelector(".provider-menu");
-    if (existing) { existing.remove(); return; }
-
-    const menu = document.createElement("div");
-    menu.className = "provider-menu";
-
-    Object.values(PROVIDERS).forEach(p => {
-      const btn = document.createElement("button");
-      btn.className = "provider-option";
-      btn.innerHTML = `<span class="provider-dot" style="background:${p.color}"></span>${p.name}`;
-      btn.onclick = () => { manualProvider = p; currentProvider = p; updateProviderDisplay(p); menu.remove(); };
-      menu.appendChild(btn);
-    });
-
-    providerSelect.parentElement.appendChild(menu);
-  }
-
-  function init() {
-    initExport();
-    initSearch();
-    initProviderSelect();
-
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      if (tabs[0]) {
-        currentTabId = tabs[0].id;
-        checkTabStatus();
-        loadConversation();
-      }
-    });
-
-    chrome.runtime.onMessage.addListener(handleBackgroundMessage);
-
-    chrome.tabs.onActivated.addListener((activeInfo) => {
-      currentTabId = activeInfo.tabId;
-      streamingMsgEl = null;
-      lastStreamedSeq = 0;
-      loadConversation();
-      checkTabStatus();
-    });
-
-    promptInput.addEventListener("input", onInputChange);
-    promptInput.addEventListener("keydown", onInputKeyDown);
-    sendBtn.addEventListener("click", sendPrompt);
-    clearBtn.addEventListener("click", clearConversation);
-
-    setStatus("disconnected", "Select a provider");
-  }
 })();

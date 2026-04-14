@@ -2,6 +2,29 @@
   if (window.__vivimPocInitialized) return;
   window.__vivimPocInitialized = true;
 
+  const telemetry = window.__vivimTelemetry = {
+    track: function() {
+      if (typeof VIVIMTelemetry !== 'undefined') {
+        VIVIMTelemetry.track.apply(VIMIMTelemetry, arguments);
+      }
+    },
+    trackFeatureUsed: function(name, props) {
+      if (typeof VIVIMTelemetry !== 'undefined') {
+        VIVIMTelemetry.trackFeatureUsed(name, props);
+      }
+    },
+    trackError: function(err, ctx) {
+      if (typeof VIVIMTelemetry !== 'undefined') {
+        VIVIMTelemetry.trackError(err, ctx);
+      }
+    },
+    trackAction: function(act, props) {
+      if (typeof VIVIMTelemetry !== 'undefined') {
+        VIVIMTelemetry.trackAction(act, props);
+      }
+    }
+  };
+
   console.log("[VIVIM POC] 🔍 Checking chrome runtime...", { 
     hasChrome: typeof chrome !== "undefined",
     hasRuntime: typeof chrome !== "undefined" && typeof chrome.runtime !== "undefined",
@@ -22,6 +45,7 @@
 
   console.log("[VIVIM POC] ✅ Chrome runtime available, extension ID:", chrome.runtime.id);
   console.log("[VIVIM POC] Initialized");
+  if (telemetry) telemetry.trackAction('content_loaded');
 
   // Setup Web-Bridge Peer to communicate with inject-web.js
   window.addEventListener("message", (e) => {
@@ -207,7 +231,7 @@ function injectButton(container) {
         type: "SAVE_FROM_DOM",
         content: content,
         timestamp: Date.now(),
-      }).catch(() => {});
+      }).catch((err) => console.warn("[VIVIM content] Failed to send SAVE_FROM_DOM:", err));
     };
 
     container.appendChild(btn);

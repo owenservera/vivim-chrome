@@ -6,7 +6,7 @@ var injectWeb = (function () {
   // ═══════════════════════════════════════════════════════
 
   function y(o) {
-    return o == null || typeof o == "function" ? { main: o } : o;
+    return o === null || typeof o === "function" ? { main: o } : o;
   }
 
   const q = "web-bridge",
@@ -30,12 +30,63 @@ var injectWeb = (function () {
       };
       this.handleMessage = (i) => {
         const s = i.data;
-        !s ||
-          typeof s != "object" ||
-          s.type !== this.messageType ||
-          (this.isAllowedId(s.communicationId) &&
-            (s.action && this.handleRequestMessage(s),
-            s.requestId && this.handleResponseMessage(s)));
+        // Enhanced validation for security
+        if (!s || typeof s !== "object" || s.type !== this.messageType) {
+          return;
+        }
+
+        // Origin validation - only accept from same origin or chrome-extension
+        const currentOrigin = window.location.origin;
+        const messageOrigin = i.origin;
+        const isValidOrigin = messageOrigin === currentOrigin ||
+                             messageOrigin.startsWith('chrome-extension://') ||
+                             messageOrigin === 'null'; // for local files
+        if (!isValidOrigin) {
+          console.warn("[VIVIM:BRIDGE] Rejected message from invalid origin:", messageOrigin);
+          // Track security event if telemetry is available
+          if (typeof VIVIMTelemetry !== 'undefined' && VIVIMTelemetry.trackSecurity) {
+            VIVIMTelemetry.trackSecurity('invalid_origin_message', {
+              origin: messageOrigin,
+              expected: currentOrigin,
+              type: s.type,
+              action: s.action
+            });
+          }
+          return;
+        }
+
+        if (!this.isAllowedId(s.communicationId)) {
+          console.warn("[VIVIM:BRIDGE] Rejected message from unauthorized communicationId:", s.communicationId);
+          // Track security event if telemetry is available
+          if (typeof VIVIMTelemetry !== 'undefined' && VIVIMTelemetry.trackSecurity) {
+            VIVIMTelemetry.trackSecurity('unauthorized_communication_id', {
+              communicationId: s.communicationId,
+              type: s.type,
+              action: s.action
+            });
+          }
+          return;
+        }
+        // Additional security checks
+        if (s.action && typeof s.action !== "string") {
+          console.warn("[VIVIM:BRIDGE] Invalid action type:", typeof s.action);
+          return;
+        }
+        if (s.requestId && typeof s.requestId !== "string" && typeof s.requestId !== "number") {
+          console.warn("[VIVIM:BRIDGE] Invalid requestId type:", typeof s.requestId);
+          return;
+        }
+        if (s.data && typeof s.data !== "object") {
+          console.warn("[VIVIM:BRIDGE] Invalid data type:", typeof s.data);
+          return;
+        }
+
+        if (s.action) {
+          this.handleRequestMessage(s);
+        }
+        if (s.requestId) {
+          this.handleResponseMessage(s);
+        }
       };
       this.communicationId = t;
       this.messageType = e.messageType || q;
@@ -88,20 +139,10 @@ var injectWeb = (function () {
         globalThis.postMessage(n, "*");
       });
     }
-    stopHandshakeRetry() { this.handshakeRetryInterval && (clearTimeout(this.handshakeRetryInterval), this.handshakeRetryInterval = void 0); }
+    stopHandshakeRetry() { if (this.handshakeRetryInterval) { clearTimeout(this.handshakeRetryInterval); this.handshakeRetryInterval = void 0; } }
     send(t, e) { 
-      if (!this.isReady) {
-        console.log("[VIVIM:INJECT] ⏳ Auto-waiting for handshake before send...", { action: t, timestamp: Date.now() });
-        this.ensureReady().then(() => {
-          console.log("[VIVIM:INJECT] ✅ Handshake complete, sending queued message", { action: t, timestamp: Date.now() });
-          const i = { type: this.messageType, communicationId: this.communicationId, id: this.generateId(), action: t, data: e, needResponse: !1, timestamp: Date.now() }; 
-          console.log("[VIVIM:INJECT] 📤 send() executing", { action: t, communicationId: this.communicationId, timestamp: Date.now() });
-          globalThis.postMessage(i, "*"); 
-        });
-        return;
-      }
       const i = { type: this.messageType, communicationId: this.communicationId, id: this.generateId(), action: t, data: e, needResponse: !1, timestamp: Date.now() }; 
-      console.log("[VIVIM:INJECT] 📤 send() executing (sync)", { action: t, communicationId: this.communicationId, timestamp: Date.now() });
+      console.log("[VIVIM:INJECT] 📤 Bridge send()", { action: t, communicationId: this.communicationId, isReady: this.isReady, timestamp: Date.now() });
       globalThis.postMessage(i, "*"); 
     }
     async invoke(t, e) { return await this.ensureReady(), this.invokeRequest(t, e); }
@@ -124,7 +165,9 @@ var injectWeb = (function () {
         const r = this.messageHandlers.get(e);
         if (!r) { s && this.sendResponse(n, !1, void 0, `未找到处理器: ${e}`); return; }
         let a = r(i);
-        a && typeof a.then == "function" && (a = await a);
+        if (a && typeof a.then === "function") {
+          a = await a;
+        }
         s && this.sendResponse(n, !0, a);
       } catch (r) {
         if (console.error(`处理消息错误 [${e}]:`, r), s) { const a = r instanceof Error ? r.message : String(r); this.sendResponse(n, !1, void 0, a); }
@@ -150,7 +193,7 @@ var injectWeb = (function () {
     static reqId = null;
     static updatedAt = null;
     static extHeaders = {};
-    static setReqId(t) { t && (this.reqId = t, this.updatedAt = Date.now()); }
+    static setReqId(t) { if (t) { this.reqId = t; this.updatedAt = Date.now(); } }
     static getLatest() { return { reqId: this.reqId, updatedAt: this.updatedAt }; }
     static setExtHeaders(t) { this.extHeaders = { ...this.extHeaders, ...t }; }
     static getExtHeaders() { return this.extHeaders; }
@@ -160,20 +203,20 @@ var injectWeb = (function () {
     static authorization = null;
     static userIdentityType = null;
     static updatedAt = null;
-    static setAuthData(t, e) { t && (this.authorization = t, e !== void 0 && (this.userIdentityType = e), this.updatedAt = Date.now()); }
+    static setAuthData(t, e) { if (t) { this.authorization = t; if (e !== void 0) { this.userIdentityType = e; } this.updatedAt = Date.now(); secureAuthStore.set('copilot', this.getLatest()); } }
     static getLatest() { return { authorization: this.authorization, userIdentityType: this.userIdentityType, updatedAt: this.updatedAt }; }
   }
-  window.CopilotAuthStore = H;
+  // Secure auth storage - not exposed globally
+  const secureAuthStore = new Map();
 
   class g {
     static authorization = null;
     static updatedAt = null;
     static extraHeaders = {};
-    static setAuthData(t) { t && (this.authorization = t, this.updatedAt = Date.now()); }
-    static setExtraHeaders(t) { this.extraHeaders = t, this.updatedAt = Date.now(); }
+    static setAuthData(t) { if (t) { this.authorization = t; this.updatedAt = Date.now(); secureAuthStore.set('chatgpt', this.getLatest()); } }
+    static setExtraHeaders(t) { if (t) { this.extraHeaders = t; this.updatedAt = Date.now(); secureAuthStore.set('chatgpt', this.getLatest()); } }
     static getLatest() { return { authorization: this.authorization, updatedAt: this.updatedAt, extraHeaders: Object.keys(this.extraHeaders).length > 0 ? this.extraHeaders : void 0 }; }
   }
-  window.ChatGPTAuthStore = g;
 
   const X = ["chatgpt-", "oai-"];
 
@@ -200,26 +243,19 @@ var injectWeb = (function () {
     static extraHeaders = {};
     static listMessagesUrl = null;
     static updatedAt = null;
-    static setAuthData(t) { t && (this.authorization = t, this.updatedAt = Date.now()); }
-    static setExtraHeaders(t) { this.extraHeaders = { ...this.extraHeaders, ...t }, this.updatedAt = Date.now(); }
-    static setListMessagesUrl(t) { t && (this.listMessagesUrl = t, this.updatedAt = Date.now()); }
+    static setAuthData(t) { t && (this.authorization = t, this.updatedAt = Date.now(), secureAuthStore.set('kimi', this.getLatest())); }
+    static setExtraHeaders(t) { this.extraHeaders = { ...this.extraHeaders, ...t }, this.updatedAt = Date.now(), secureAuthStore.set('kimi', this.getLatest()); }
+    static setListMessagesUrl(t) { t && (this.listMessagesUrl = t, this.updatedAt = Date.now(), secureAuthStore.set('kimi', this.getLatest())); }
     static getLatest() { return { authorization: this.authorization, extraHeaders: this.extraHeaders, listMessagesUrl: this.listMessagesUrl, updatedAt: this.updatedAt }; }
   }
-  window.KimiAuthStore = c;
-
-  // ═══════════════════════════════════════════════════════
-  // Claude Auth Store (claude.ai)
-  // ═══════════════════════════════════════════════════════
-
   class ClaudeAuthStore {
     static authorization = null;
     static sessionKey = null;
     static updatedAt = null;
-    static setAuthData(t) { t && (this.authorization = t, this.updatedAt = Date.now()); }
-    static setSessionKey(t) { t && (this.sessionKey = t, this.updatedAt = Date.now()); }
+    static setAuthData(t) { t && (this.authorization = t, this.updatedAt = Date.now(), secureAuthStore.set('claude', this.getLatest())); }
+    static setSessionKey(t) { t && (this.sessionKey = t, this.updatedAt = Date.now(), secureAuthStore.set('claude', this.getLatest())); }
     static getLatest() { return { authorization: this.authorization, sessionKey: this.sessionKey, updatedAt: this.updatedAt }; }
   }
-  window.ClaudeAuthStore = ClaudeAuthStore;
 
   // ═══════════════════════════════════════════════════════
   // DeepSeek Auth Store (deepseek.com)
@@ -228,10 +264,9 @@ var injectWeb = (function () {
   class DeepSeekAuthStore {
     static authorization = null;
     static updatedAt = null;
-    static setAuthData(t) { t && (this.authorization = t, this.updatedAt = Date.now()); }
+    static setAuthData(t) { t && (this.authorization = t, this.updatedAt = Date.now(), secureAuthStore.set('deepseek', this.getLatest())); }
     static getLatest() { return { authorization: this.authorization, updatedAt: this.updatedAt }; }
   }
-  window.DeepSeekAuthStore = DeepSeekAuthStore;
 
   // ═══════════════════════════════════════════════════════
   // Perplexity Auth Store (perplexity.ai)
@@ -240,42 +275,37 @@ var injectWeb = (function () {
   class PerplexityAuthStore {
     static authorization = null;
     static updatedAt = null;
-    static setAuthData(t) { t && (this.authorization = t, this.updatedAt = Date.now()); }
+    static setAuthData(t) { t && (this.authorization = t, this.updatedAt = Date.now(), secureAuthStore.set('perplexity', this.getLatest())); }
     static getLatest() { return { authorization: this.authorization, updatedAt: this.updatedAt }; }
   }
-  window.PerplexityAuthStore = PerplexityAuthStore;
 
   class GrokAuthStore {
     static authorization = null;
     static updatedAt = null;
-    static setAuthData(t) { t && (this.authorization = t, this.updatedAt = Date.now()); }
+    static setAuthData(t) { t && (this.authorization = t, this.updatedAt = Date.now(), secureAuthStore.set('grok', this.getLatest())); }
     static getLatest() { return { authorization: this.authorization, updatedAt: this.updatedAt }; }
   }
-  window.GrokAuthStore = GrokAuthStore;
 
   class PoeAuthStore {
     static authorization = null;
     static updatedAt = null;
-    static setAuthData(t) { t && (this.authorization = t, this.updatedAt = Date.now()); }
+    static setAuthData(t) { t && (this.authorization = t, this.updatedAt = Date.now(), secureAuthStore.set('poe', this.getLatest())); }
     static getLatest() { return { authorization: this.authorization, updatedAt: this.updatedAt }; }
   }
-  window.PoeAuthStore = PoeAuthStore;
 
   class TongyiAuthStore {
     static authorization = null;
     static updatedAt = null;
-    static setAuthData(t) { t && (this.authorization = t, this.updatedAt = Date.now()); }
+    static setAuthData(t) { t && (this.authorization = t, this.updatedAt = Date.now(), secureAuthStore.set('tongyi', this.getLatest())); }
     static getLatest() { return { authorization: this.authorization, updatedAt: this.updatedAt }; }
   }
-  window.TongyiAuthStore = TongyiAuthStore;
 
   class YuanbaoAuthStore {
     static authorization = null;
     static updatedAt = null;
-    static setAuthData(t) { t && (this.authorization = t, this.updatedAt = Date.now()); }
+    static setAuthData(t) { t && (this.authorization = t, this.updatedAt = Date.now(), secureAuthStore.set('yuanbao', this.getLatest())); }
     static getLatest() { return { authorization: this.authorization, updatedAt: this.updatedAt }; }
   }
-  window.YuanbaoAuthStore = YuanbaoAuthStore;
 
   // ═══════════════════════════════════════════════════════════
   // Header utilities (shared by plugins)
@@ -591,6 +621,7 @@ const content = userMessage.content.parts
 
         // Delta encoding state
         let reconstructedText = "";
+        let messageParts = [];
         let currentModel = "unknown";
         let currentRole = null;
         let streamEnded = false;
@@ -658,49 +689,67 @@ const content = userMessage.content.parts
                         }
 
                         // Append or Replace text content
-                        if (subPath === "/message/content/parts/0") {
-                          if (subOpType === "append") {
-                            reconstructedText += subValue;
+                        if (subPath === "/message/content/parts" && (subOpType === "replace" || subOpType === "add")) {
+                          messageParts = Array.isArray(subValue) ? subValue : [subValue];
+                          reconstructedText = messageParts.filter(p => typeof p === 'string').join('\n\n');
+                          appendCount++;
+                          chunkSequence++;
+                        } else if (subPath && subPath.startsWith("/message/content/parts/")) {
+                          const match = subPath.match(/\/message\/content\/parts\/(\d+)/);
+                          if (match) {
+                            const idx = parseInt(match[1], 10);
+                            if (subOpType === "append") {
+                              messageParts[idx] = (messageParts[idx] || "") + subValue;
+                            } else if (subOpType === "replace" || subOpType === "add") {
+                              messageParts[idx] = subValue;
+                            }
+                            reconstructedText = messageParts.filter(p => typeof p === 'string').join('\n\n');
                             appendCount++;
                             chunkSequence++;
-                          } else if (subOpType === "replace" || subOpType === "add") {
-                            reconstructedText = subValue;
-                            appendCount++;
-                            chunkSequence++;
-                          }
-
-                          // Send chunk to bridge on every content update with sequence number
-if (window.__VIVIM_BRIDGE && reconstructedText) {
-        console.log("[VIVIM:INJECT] 📤 chatChunk sent", { 
-          seq: chunkSequence, 
-          contentLength: reconstructedText.length, 
-          model: currentModel, 
-          url: ctx.url?.slice(0, 50),
-          timestamp: Date.now(),
-          contentPreview: reconstructedText.slice(0, 100)
-        });
-        window.__VIVIM_BRIDGE.send("chatChunk", {
-                              role: currentRole || "assistant",
-                              content: reconstructedText,
-                              model: currentModel,
-                              url: ctx.url,
-                              seq: chunkSequence,
-                              streamId: streamId,
-                              cumulative: true
-                            });
                           }
                         }
+
+                        // Send chunk to bridge on every content update with sequence number
+                        if (window.__VIVIM_BRIDGE && reconstructedText) {
+                          console.log("[VIVIM:INJECT] 📤 chatChunk sent", { 
+                            seq: chunkSequence, 
+                            contentLength: reconstructedText.length, 
+                            model: currentModel, 
+                            url: ctx.url?.slice(0, 50),
+                            timestamp: Date.now(),
+                            contentPreview: reconstructedText.slice(0, 100)
+                          });
+                          window.__VIVIM_BRIDGE.send("chatChunk", {
+                            role: currentRole || "assistant",
+                            content: reconstructedText,
+                            model: currentModel,
+                            url: ctx.url,
+                            seq: chunkSequence,
+                            streamId: streamId,
+                            cumulative: true
+                          });
+                        }
                       }
-                    } else if (path === "/message/content/parts/0") {
+                    } else {
                       // Single append/replace operation
-                      if (op === "append") {
-                        reconstructedText += value;
+                      if (path === "/message/content/parts" && (op === "replace" || op === "add")) {
+                        messageParts = Array.isArray(value) ? value : [value];
+                        reconstructedText = messageParts.filter(p => typeof p === 'string').join('\n\n');
                         appendCount++;
                         chunkSequence++;
-                      } else if (op === "replace" || op === "add") {
-                        reconstructedText = value;
-                        appendCount++;
-                        chunkSequence++;
+                      } else if (path && path.startsWith("/message/content/parts/")) {
+                        const match = path.match(/\/message\/content\/parts\/(\d+)/);
+                        if (match) {
+                          const idx = parseInt(match[1], 10);
+                          if (op === "append") {
+                            messageParts[idx] = (messageParts[idx] || "") + value;
+                          } else if (op === "replace" || op === "add") {
+                            messageParts[idx] = value;
+                          }
+                          reconstructedText = messageParts.filter(p => typeof p === 'string').join('\n\n');
+                          appendCount++;
+                          chunkSequence++;
+                        }
                       }
 
                       // Send chunk on every update with sequence number
@@ -793,31 +842,51 @@ if (window.__VIVIM_BRIDGE && reconstructedText) {
               if (subPath === "/message/metadata" && subOpType === "add" && subValue?.model_slug) {
                 currentModel = subValue.model_slug;
               }
-              if (subPath === "/message/content/parts/0") {
-                if (subOpType === "append") {
-                  reconstructedText += subValue;
-                  appendCount++;
-                  chunkSequence++;
-                } else if (subOpType === "replace" || subOpType === "add") {
-                  reconstructedText = subValue;
+              
+              if (subPath === "/message/content/parts" && (subOpType === "replace" || subOpType === "add")) {
+                messageParts = Array.isArray(subValue) ? subValue : [subValue];
+                reconstructedText = messageParts.filter(p => typeof p === 'string').join('\n\n');
+                appendCount++;
+                chunkSequence++;
+              } else if (subPath && subPath.startsWith("/message/content/parts/")) {
+                const match = subPath.match(/\/message\/content\/parts\/(\d+)/);
+                if (match) {
+                  const idx = parseInt(match[1], 10);
+                  if (subOpType === "append") {
+                    messageParts[idx] = (messageParts[idx] || "") + subValue;
+                  } else if (subOpType === "replace" || subOpType === "add") {
+                    messageParts[idx] = subValue;
+                  }
+                  reconstructedText = messageParts.filter(p => typeof p === 'string').join('\n\n');
                   appendCount++;
                   chunkSequence++;
                 }
               }
+              
               // Fix #10: break early on stream end
               if (subPath === "/message/status" && subOpType === "replace" && subValue === "finished_successfully") {
                 streamEnded = true;
               }
             }
-          } else if (path === "/message/content/parts/0") {
-            if (op === "append") {
-              reconstructedText += value;
+          } else {
+            if (path === "/message/content/parts" && (op === "replace" || op === "add")) {
+              messageParts = Array.isArray(value) ? value : [value];
+              reconstructedText = messageParts.filter(p => typeof p === 'string').join('\n\n');
               appendCount++;
               chunkSequence++;
-            } else if (op === "replace" || op === "add") {
-              reconstructedText = value;
-              appendCount++;
-              chunkSequence++;
+            } else if (path && path.startsWith("/message/content/parts/")) {
+              const match = path.match(/\/message\/content\/parts\/(\d+)/);
+              if (match) {
+                const idx = parseInt(match[1], 10);
+                if (op === "append") {
+                  messageParts[idx] = (messageParts[idx] || "") + value;
+                } else if (op === "replace" || op === "add") {
+                  messageParts[idx] = value;
+                }
+                reconstructedText = messageParts.filter(p => typeof p === 'string').join('\n\n');
+                appendCount++;
+                chunkSequence++;
+              }
             }
           }
           if (path === "/message/status" && op === "replace" && value === "finished_successfully") {
@@ -1391,7 +1460,7 @@ if (window.__VIVIM_BRIDGE && reconstructedText) {
         if (plugin.matchResponse?.(ctx)) {
           promises.push(
             Promise.resolve().then(() => plugin.onResponse?.(ctx))
-              .catch(() => {})
+              .catch((err) => console.warn("[VIVIM:PLUGIN] Plugin response handler failed:", plugin.name || "unknown", err))
           );
         }
       }
@@ -1445,7 +1514,7 @@ if (window.__VIVIM_BRIDGE && reconstructedText) {
         };
 
         // Fire-and-forget — does NOT block returning response
-        self.runResponsePlugins(responseCtx).catch(() => {});
+        self.runResponsePlugins(responseCtx).catch((err) => console.warn("[VIVIM:RESPONSE] Response plugins failed:", err));
 
         return response; // original, untouched
       };
@@ -1833,6 +1902,26 @@ if (window.__VIVIM_BRIDGE && reconstructedText) {
     }
 
     console.log("[VIVIM:INJECT] 🎉 VIVIM injection fully initialized!");
+
+    // Cleanup on page unload to prevent memory leaks
+    window.addEventListener('beforeunload', () => {
+      console.log("[VIVIM:INJECT] 🧹 Cleaning up on page unload");
+      try {
+        // Clean up bridge
+        if (o && typeof o.destroy === 'function') {
+          o.destroy();
+        }
+        // Clean up interceptors if they have destroy methods
+        if (fetchInterceptor && typeof fetchInterceptor.destroy === 'function') {
+          fetchInterceptor.destroy();
+        }
+        if (xhrInterceptor && typeof xhrInterceptor.destroy === 'function') {
+          xhrInterceptor.destroy();
+        }
+      } catch (e) {
+        console.warn("[VIVIM:INJECT] Cleanup failed:", e);
+      }
+    });
   });
 
   function D() {}

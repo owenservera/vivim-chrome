@@ -12,6 +12,7 @@ const entries = [
   { in: "inject-web.js", out: "inject-web" },
   { in: "content.js", out: "content" },
   { in: "background.js", out: "background" },
+  { in: "sidepanel.js", out: "sidepanel" },
 ];
 
 const htmlFiles = ["sidepanel.html"];

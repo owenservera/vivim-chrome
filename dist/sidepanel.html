@@ -273,6 +273,7 @@
 
     /* ─── Utility ─── */
     .hidden { display: none !important; }
+    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
   </style>
 </head>
 <body>
@@ -280,28 +281,31 @@
     <!-- Header -->
     <div class="sidepanel__header">
       <div class="sidepanel__header__brand">
-        <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+        <svg width="20" height="20" viewBox="0 0 20 20" fill="none" role="img" aria-label="VIVIM logo">
           <rect width="20" height="20" rx="4" fill="#6C5CE7"/>
           <text x="10" y="15" text-anchor="middle" fill="white" font-size="12" font-weight="bold">V</text>
         </svg>
         <span>VIVIM</span>
       </div>
       <div class="sidepanel__header__controls">
-        <button class="header-btn" id="providerSelect" title="Select provider">
-          <span class="provider-dot" id="providerDot"></span>
+        <button class="header-btn" id="providerSelect" type="button" aria-label="Select AI provider" title="Select provider">
+          <span class="provider-dot" id="providerDot" aria-hidden="true"></span>
           <span id="providerName">ChatGPT</span>
         </button>
-        <button class="header-btn" id="exportBtn" title="Export">📥</button>
+        <button class="header-btn" id="exportBtn" type="button" aria-label="Export conversation" title="Export">📥</button>
+        <button class="header-btn" id="privacyBtn" type="button" aria-label="Privacy and telemetry settings" title="Privacy & Telemetry">⚙️</button>
       </div>
       <div class="sidepanel__header__status">
-        <span class="status-dot" id="statusDot"></span>
-        <span id="statusText">Connecting...</span>
+        <span class="status-dot" id="statusDot" aria-hidden="true"></span>
+        <span id="statusText" aria-live="polite">Connecting...</span>
       </div>
     </div>
 
     <!-- Toolbar -->
     <div class="sidepanel__toolbar">
-      <input type="text" id="searchInput" placeholder="Search messages..." class="toolbar-search">
+      <label for="searchInput" class="sr-only">Search messages</label>
+      <input type="text" id="searchInput" placeholder="Search messages..." class="toolbar-search" aria-describedby="search-desc">
+      <div id="search-desc" class="sr-only">Search through conversation messages</div>
     </div>
 
     <!-- Messages Area -->
@@ -315,18 +319,21 @@
 
     <!-- Input Area -->
     <div class="sidepanel__input">
+      <label for="promptInput" class="sr-only">Type your prompt</label>
       <textarea
         id="promptInput"
         placeholder="Type your prompt..."
         rows="1"
+        aria-describedby="prompt-desc"
       ></textarea>
-      <button id="sendBtn" type="button" title="Send (Cmd+Enter)" disabled>▶</button>
+      <div id="prompt-desc" class="sr-only">Send messages to the AI assistant</div>
+      <button id="sendBtn" type="button" aria-label="Send message" title="Send (Cmd+Enter)" disabled>▶</button>
     </div>
 
     <!-- Status Bar -->
     <div class="sidepanel__status">
-      <span id="msgCount">0 messages</span>
-      <button id="clearBtn" type="button" title="Clear conversation">Clear</button>
+      <span id="msgCount" aria-live="polite">0 messages</span>
+      <button id="clearBtn" type="button" aria-label="Clear conversation" title="Clear conversation">Clear</button>
     </div>
   </div>
 

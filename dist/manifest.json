@@ -40,5 +40,11 @@
       "run_at": "document_start",
       "js": ["content.js"]
     }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["telemetry.js", "telemetry-dashboard.js"],
+      "matches": ["https://chatgpt.com/*", "https://chat.com/*"]
+    }
   ]
 }
