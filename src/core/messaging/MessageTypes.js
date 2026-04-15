@@ -1,0 +1,72 @@
+/**
+ * Message type constants for type safety and consistency
+ */
+export const MessageTypes = {
+  // User Actions
+  USER_PROMPT: 'USER_PROMPT',
+  SEND_PROMPT: 'SEND_PROMPT',
+  CLEAR_CONVERSATION: 'CLEAR_CONVERSATION',
+  START_NEW_CONVERSATION: 'START_NEW_CONVERSATION',
+
+  // Streaming
+  STREAM_CHUNK: 'STREAM_CHUNK',
+  STREAM_COMPLETE: 'STREAM_COMPLETE',
+  STREAM_UPDATE: 'STREAM_UPDATE',
+
+  // Conversations
+  GET_CONVERSATION: 'GET_CONVERSATION',
+  LOAD_CONVERSATION: 'LOAD_CONVERSATION',
+  LOAD_CONVERSATION_FROM_DOM: 'LOAD_CONVERSATION_FROM_DOM',
+  SAVE_FROM_DOM: 'SAVE_FROM_DOM',
+  CONVERSATION_LOADED: 'CONVERSATION_LOADED',
+  CONVERSATION_CLEARED: 'CONVERSATION_CLEARED',
+  MESSAGE_ADDED: 'MESSAGE_ADDED',
+
+  // History
+  GET_CONVERSATION_HISTORY: 'GET_CONVERSATION_HISTORY',
+  UPDATE_CONVERSATION_HISTORY: 'UPDATE_CONVERSATION_HISTORY',
+
+  // Tab Management
+  TAB_DETECTED: 'TAB_DETECTED',
+  TAB_ACTIVATED: 'TAB_ACTIVATED',
+  GET_TAB_STATUS: 'GET_TAB_STATUS',
+
+  // Destinations
+  REGISTER_DESTINATION: 'REGISTER_DESTINATION',
+  UNREGISTER_DESTINATION: 'UNREGISTER_DESTINATION',
+  LIST_DESTINATIONS: 'LIST_DESTINATIONS',
+
+  // Bridge Communication
+  BRIDGE_MESSAGE: 'BRIDGE_MESSAGE',
+  BRIDGE_HANDSHAKE: 'BRIDGE_HANDSHAKE',
+
+  // UI Events
+  UI_READY: 'UI_READY',
+  PROVIDER_CHANGED: 'PROVIDER_CHANGED',
+  SEARCH_QUERY: 'SEARCH_QUERY',
+
+  // System
+  PING: 'PING',
+  PONG: 'PONG',
+  ERROR: 'ERROR'
+};
+
+/**
+ * Message validation schemas (for future use with libraries like Joi)
+ */
+export const MessageSchemas = {
+  [MessageTypes.USER_PROMPT]: {
+    required: ['content'],
+    optional: ['conversationId', 'timestamp', 'tabId']
+  },
+
+  [MessageTypes.STREAM_CHUNK]: {
+    required: ['role', 'content'],
+    optional: ['model', 'seq', 'streamId', 'timestamp', 'tabId']
+  },
+
+  [MessageTypes.GET_CONVERSATION]: {
+    required: [],
+    optional: ['tabId', 'conversationId']
+  }
+};

@@ -270,6 +270,65 @@
     .sidepanel__status button:hover {
       color: var(--text-primary);
     }
+    .status-controls {
+      display: flex;
+      gap: 8px;
+    }
+
+    /* History modal */
+    .history-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .history-overlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.5);
+    }
+
+    .history-content {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-primary);
+      border-radius: var(--radius-lg);
+      padding: 16px;
+      max-width: 400px;
+      max-height: 60vh;
+      overflow-y: auto;
+      position: relative;
+      z-index: 1;
+    }
+
+    .history-list {
+      margin-top: 12px;
+    }
+
+    .history-item {
+      padding: 8px 12px;
+      border-radius: var(--radius-md);
+      cursor: pointer;
+      border: 1px solid transparent;
+      margin-bottom: 4px;
+    }
+
+    .history-item:hover {
+      background: var(--bg-hover);
+      border-color: var(--border-primary);
+    }
+
+    .history-title {
+      font-weight: 500;
+      margin-bottom: 4px;
+    }
+
+    .history-meta {
+      font-size: 11px;
+      color: var(--text-tertiary);
+    }
 
     /* ─── Utility ─── */
     .hidden { display: none !important; }
@@ -287,14 +346,16 @@
         </svg>
         <span>VIVIM</span>
       </div>
-      <div class="sidepanel__header__controls">
-        <button class="header-btn" id="providerSelect" type="button" aria-label="Select AI provider" title="Select provider">
-          <span class="provider-dot" id="providerDot" aria-hidden="true"></span>
-          <span id="providerName">ChatGPT</span>
-        </button>
-        <button class="header-btn" id="exportBtn" type="button" aria-label="Export conversation" title="Export">📥</button>
-        <button class="header-btn" id="privacyBtn" type="button" aria-label="Privacy and telemetry settings" title="Privacy & Telemetry">⚙️</button>
-      </div>
+       <div class="sidepanel__header__controls">
+         <button class="header-btn" id="newChatBtn" type="button" aria-label="Start new conversation" title="New Chat">➕</button>
+         <button class="header-btn" id="historyBtn" type="button" aria-label="Conversation history" title="History">📚</button>
+         <button class="header-btn" id="providerSelect" type="button" aria-label="Select AI provider" title="Select provider">
+           <span class="provider-dot" id="providerDot" aria-hidden="true"></span>
+           <span id="providerName">ChatGPT</span>
+         </button>
+         <button class="header-btn" id="exportBtn" type="button" aria-label="Export conversation" title="Export">📥</button>
+         <button class="header-btn" id="privacyBtn" type="button" aria-label="Privacy and telemetry settings" title="Privacy & Telemetry">⚙️</button>
+       </div>
       <div class="sidepanel__header__status">
         <span class="status-dot" id="statusDot" aria-hidden="true"></span>
         <span id="statusText" aria-live="polite">Connecting...</span>
@@ -333,7 +394,10 @@
     <!-- Status Bar -->
     <div class="sidepanel__status">
       <span id="msgCount" aria-live="polite">0 messages</span>
-      <button id="clearBtn" type="button" aria-label="Clear conversation" title="Clear conversation">Clear</button>
+      <div class="status-controls">
+        <button id="reloadBtn" type="button" aria-label="Reload conversation from page" title="Reload from Page">🔄</button>
+        <button id="clearBtn" type="button" aria-label="Clear conversation" title="Clear conversation">Clear</button>
+      </div>
     </div>
   </div>
 
