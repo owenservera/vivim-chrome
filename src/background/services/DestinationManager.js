@@ -1,13 +1,14 @@
+import { Logger } from '../../core/logging/Logger.js';
 import { MessageTypes } from '../../core/messaging/MessageTypes.js';
 
 /**
- * Destination Manager - Handles message broadcasting to multiple targets
+ * Destination Manager - Handles message broadcasting to multiple UI targets (SidePanel, Standalone, etc.)
  */
 export class DestinationManager {
   constructor(messageBus) {
     this.messageBus = messageBus;
     this.destinations = new Map();
-    this.logger = console;
+    this.logger = new Logger('DestinationManager');
 
     this.bindEvents();
   }
@@ -19,28 +20,34 @@ export class DestinationManager {
   }
 
   /**
-   * Register a destination
+   * Register a destination from a message
    */
   handleRegisterDestination(message, sender, sendResponse) {
     const { id, config } = message;
+    if (!id) {
+      if (sendResponse) sendResponse({ ok: false, error: 'Missing destination ID' });
+      return;
+    }
     this.registerDestination(id, config);
-    sendResponse({ ok: true });
+    if (sendResponse) sendResponse({ ok: true });
   }
 
   /**
-   * Unregister a destination
+   * Unregister a destination from a message
    */
   handleUnregisterDestination(message, sender, sendResponse) {
     const { id } = message;
     this.unregisterDestination(id);
-    sendResponse({ ok: true });
+    if (sendResponse) sendResponse({ ok: true });
   }
 
   /**
-   * List all destinations
+   * List all registered destinations
    */
   handleListDestinations(message, sender, sendResponse) {
-    sendResponse({ destinations: Array.from(this.destinations.keys()) });
+    if (sendResponse) {
+      sendResponse({ destinations: Array.from(this.destinations.keys()) });
+    }
   }
 
   /**
@@ -63,7 +70,7 @@ export class DestinationManager {
       registeredAt: Date.now()
     });
 
-    this.logger.log(`[DestinationManager] Registered destination: ${id}`, capabilities);
+    this.logger.info(`Registered destination: ${id}`, capabilities);
   }
 
   /**
@@ -71,58 +78,44 @@ export class DestinationManager {
    * @param {string} id - Destination ID
    */
   unregisterDestination(id) {
-    const removed = this.destinations.delete(id);
-    if (removed) {
-      this.logger.log(`[DestinationManager] Unregistered destination: ${id}`);
+    if (this.destinations.has(id)) {
+      this.destinations.delete(id);
+      this.logger.info(`Unregistered destination: ${id}`);
     }
   }
 
   /**
    * Broadcast message to all matching destinations
-   * @param {string} type - Message type ('chunk', 'complete', 'message')
-   * @param {Object} payload - Message payload
+   * @param {Object} message - Message to broadcast
    */
-  broadcastToAllDestinations(type, payload) {
-    const timestamp = Date.now();
-    this.logger.log(`[DestinationManager] Broadcasting ${type} to ${this.destinations.size} destinations`, { timestamp });
+  broadcast(message) {
+    if (this.destinations.size === 0) return;
+
+    this.logger.debug(`Broadcasting ${message.type} to ${this.destinations.size} destinations`);
 
     for (const [id, dest] of this.destinations) {
-      this.broadcastToDestination(id, type, payload);
+      this.sendToDestination(id, dest, message);
     }
-
-    this.logger.log(`[DestinationManager] Broadcast complete`, {
-      type,
-      destinations: Array.from(this.destinations.keys()),
-      timestamp
-    });
   }
 
   /**
-   * Broadcast message to specific destination
-   * @param {string} id - Destination ID
-   * @param {string} type - Message type
-   * @param {Object} payload - Message payload
+   * Send message to specific destination
+   * @private
    */
-  broadcastToDestination(id, type, payload) {
-    const dest = this.destinations.get(id);
-    if (!dest || !dest.connected) return;
+  sendToDestination(id, dest, message) {
+    // Check capabilities for certain message types
+    if (message.type === MessageTypes.STREAM_UPDATE && !dest.capabilities.receivesStreaming) return;
+    if (message.type === MessageTypes.STREAM_COMPLETE && !dest.capabilities.receivesComplete) return;
 
     try {
-      if (type === 'chunk' && dest.capabilities.receivesStreaming) {
-        chrome.runtime.sendMessage({ ...payload, _destination: id }).catch((err) =>
-          this.logger.warn(`[DestinationManager] Failed to send chunk to ${id}:`, err)
-        );
-      } else if (type === 'complete' && dest.capabilities.receivesComplete) {
-        chrome.runtime.sendMessage({ ...payload, _destination: id }).catch((err) =>
-          this.logger.warn(`[DestinationManager] Failed to send complete to ${id}:`, err)
-        );
-      } else if (type === 'message') {
-        chrome.runtime.sendMessage({ ...payload, _destination: id }).catch((err) =>
-          this.logger.warn(`[DestinationManager] Failed to send message to ${id}:`, err)
-        );
-      }
+      chrome.runtime.sendMessage({ ...message, _destination: id }).catch((err) => {
+        // Only log if it's not a "Could not establish connection" error (UI closed)
+        if (!err.message?.includes('Could not establish connection')) {
+          this.logger.warn(`Failed to send to ${id}:`, err.message);
+        }
+      });
     } catch (error) {
-      this.logger.error(`[DestinationManager] Error broadcasting to ${id}:`, error);
+      this.logger.error(`Error sending to destination ${id}:`, error);
     }
   }
 
@@ -158,7 +151,6 @@ export class DestinationManager {
    * Initialize default destinations
    */
   init() {
-    // Register side panel as default destination
-    this.registerDestination('sidepanel');
+    this.logger.info('DestinationManager initialized');
   }
 }

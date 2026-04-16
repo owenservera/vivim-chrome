@@ -1,5 +1,5 @@
 import * as esbuild from 'esbuild';
-import { cpSync, mkdirSync, existsSync, readFileSync, readdirSync } from 'fs';
+import { cpSync, mkdirSync, existsSync, readFileSync, readdirSync, unlinkSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -16,7 +16,10 @@ let buildConfig;
 
 if (hasModularStructure) {
   // New modular build configuration
-  // Note: background and content must be ESM for Chrome, but sidepanel can be IIFE
+  // Chrome MV3 requires:
+  // - background service worker: MUST be ESM with format: 'esm'
+  // - content scripts: can be IIFE
+  // - side panel: can be IIFE
   buildConfig = {
     entryPoints: {
       background: 'src/background/index.js',
@@ -26,12 +29,13 @@ if (hasModularStructure) {
     },
     bundle: true,
     outdir,
-    format: 'iife',  // Use IIFE for compatibility with side panel
-    splitting: false,  // Disable splitting for IIFE
+    format: 'iife',
+    splitting: false,
     sourcemap: isWatch,
     minify: !isWatch,
     target: 'chrome100',
     absWorkingDir: __dirname,
+    platform: 'browser',
     define: {
       'process.env.NODE_ENV': JSON.stringify(isWatch ? 'development' : 'production'),
       'process.env.BUILD_TIME': JSON.stringify(new Date().toISOString())
@@ -72,21 +76,56 @@ async function build() {
   }
 
   try {
-    const result = await esbuild.build(buildConfig);
+    // First build: background service worker
+    // Chrome MV3 service workers work with either ESM or IIFE when using type: "module"
+    const backgroundConfig = {
+      entryPoints: [join(__dirname, 'src/background/index.js')],
+      bundle: true,
+      outfile: join(__dirname, 'dist/background.js'),
+      format: 'iife',
+      globalName: 'VIVIMBackground',
+      splitting: false,
+      sourcemap: isWatch,
+      minify: !isWatch,
+      target: 'chrome100',
+      platform: 'browser',
+      define: {
+        'process.env.NODE_ENV': JSON.stringify(isWatch ? 'development' : 'production'),
+        'process.env.BUILD_TIME': JSON.stringify(new Date().toISOString())
+      }
+    };
+    
+    await esbuild.build(backgroundConfig);
+    console.log('[build] Background service worker built');
+
+    // Second build: content scripts and side panel (IIFE)
+    const iifeConfig = {
+      entryPoints: [
+        join(__dirname, 'src/content/index.js'),
+        join(__dirname, 'src/providers/index.js'),
+        join(__dirname, 'src/ui/index.js')
+      ],
+      bundle: true,
+      outdir: join(__dirname, 'dist'),
+      format: 'iife',
+      splitting: false,
+      sourcemap: isWatch,
+      minify: !isWatch,
+      target: 'chrome100',
+      platform: 'browser',
+      define: {
+        'process.env.NODE_ENV': JSON.stringify(isWatch ? 'development' : 'production'),
+        'process.env.BUILD_TIME': JSON.stringify(new Date().toISOString())
+      }
+    };
+    
+    await esbuild.build(iifeConfig);
+    console.log('[build] Content scripts and side panel built (IIFE)');
 
     // Copy static assets
     copyStaticAssets();
 
     console.log('[build] Modular build completed successfully!');
-
-    if (result.metafile) {
-      // Log build stats for modular build
-      const outputs = result.metafile.outputs;
-      Object.entries(outputs).forEach(([file, info]) => {
-        const size = (info.bytes / 1024).toFixed(2);
-        console.log(`${file}: ${size} KB`);
-      });
-    }
 
   } catch (error) {
     console.error('[build] Build failed:', error);
@@ -122,24 +161,18 @@ function copyStaticAssets() {
     cpSync(iconsDir, iconsOut, { recursive: true });
   }
 
-  // Copy built JS files back to root for Chrome extension loading
-  const jsFiles = ['inject-web.js', 'content.js', 'background.js', 'sidepanel.js'];
-  for (const jsFile of jsFiles) {
-    const src = join(outdir, jsFile);
-    const dst = join(__dirname, jsFile);
-    if (existsSync(src)) {
-      cpSync(src, dst);
-      console.log(`[build] Copied ${jsFile} to root`);
+  // Clean up old bundled files (index.js from old builds)
+  const oldFiles = ['index.js'];
+  for (const f of oldFiles) {
+    const oldPath = join(outdir, f);
+    if (existsSync(oldPath)) {
+      try {
+        unlinkSync(oldPath);
+        console.log('[build] Cleaned up old file:', f);
+      } catch (e) {
+        // Ignore
+      }
     }
-  }
-
-  // Copy chunk files to root (needed for ES module imports)
-  const chunkFiles = readdirSync(outdir).filter(f => f.startsWith('chunk-') && f.endsWith('.js'));
-  for (const chunkFile of chunkFiles) {
-    const src = join(outdir, chunkFile);
-    const dst = join(__dirname, chunkFile);
-    cpSync(src, dst);
-    console.log(`[build] Copied ${chunkFile} to root`);
   }
 
   console.log('[build] Static assets copied');

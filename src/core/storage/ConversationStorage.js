@@ -1,13 +1,48 @@
 import { StorageManager } from './StorageManager.js';
 
-/**
- * Conversation-specific storage operations
- */
 export class ConversationStorage {
   constructor(storageManager) {
     this.storage = storageManager;
     this.CONVERSATION_PREFIX = 'conv_';
     this.TEMP_CONVERSATION_PREFIX = 'conv_temp_';
+    this.contentIndex = new Map();
+  }
+
+  hashContent(content) {
+    if (!content) return null;
+    let hash = 0;
+    const normalized = content.toLowerCase().trim().substring(0, 100);
+    for (let i = 0; i < normalized.length; i++) {
+      const char = normalized.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash;
+    }
+    return hash.toString(36);
+  }
+
+  findDuplicateConversation(searchContent) {
+    const contentHash = this.hashContent(searchContent);
+    if (!contentHash) return null;
+
+    for (const [hash, conversationIds] of this.contentIndex) {
+      if (hash === contentHash) {
+        return conversationIds[0];
+      }
+    }
+    return null;
+  }
+
+  indexConversation(conversationId, messages) {
+    const userMessages = messages.filter(m => m.role === 'user');
+    if (userMessages.length === 0) return;
+
+    const firstContent = userMessages[0].content;
+    const contentHash = this.hashContent(firstContent);
+
+    if (!this.contentIndex.has(contentHash)) {
+      this.contentIndex.set(contentHash, []);
+    }
+    this.contentIndex.get(contentHash).push(conversationId);
   }
 
   /**
@@ -72,7 +107,6 @@ export class ConversationStorage {
   async addMessage(conversationId, message, isTemp = false) {
     const existingMessages = await this.getConversation(conversationId, isTemp);
 
-    // Avoid duplicates (simple check)
     const isDuplicate = existingMessages.some(msg =>
       msg.content === message.content &&
       msg.role === message.role &&
@@ -86,7 +120,61 @@ export class ConversationStorage {
       });
 
       await this.storeConversation(conversationId, existingMessages, isTemp);
+      this.indexConversation(conversationId, existingMessages);
     }
+  }
+
+  async findSimilarConversations(content, threshold = 0.8) {
+    const contentHash = this.hashContent(content);
+    if (!contentHash) return [];
+
+    const similar = [];
+    const searchNormalized = content.toLowerCase().trim().substring(0, 100);
+
+    for (const [hash, conversationIds] of this.contentIndex) {
+      const similarity = this.calculateSimilarity(searchNormalized, hash);
+      if (similarity >= threshold) {
+        similar.push(...conversationIds.map(id => ({ id, similarity })));
+      }
+    }
+
+    return similar;
+  }
+
+  calculateSimilarity(a, b) {
+    if (a === b) return 1;
+    if (!a || !b) return 0;
+
+    const aSet = new Set(a.split(''));
+    const bSet = new Set(b.split(''));
+    const intersection = new Set([...aSet].filter(x => bSet.has(x)));
+    const union = new Set([...aSet, ...bSet]);
+
+    return intersection.size / union.size;
+  }
+
+  async removeDuplicateConversations() {
+    const conversationIds = await this.getAllConversationIds();
+    const toRemove = [];
+
+    for (const id of conversationIds) {
+      const messages = await this.getConversation(id);
+      if (messages.length <= 1) {
+        const userMsg = messages.find(m => m.role === 'user');
+        if (userMsg) {
+          const similar = await this.findSimilarConversations(userMsg.content, 0.9);
+          if (similar.length > 1) {
+            toRemove.push(id);
+          }
+        }
+      }
+    }
+
+    for (const id of toRemove) {
+      await this.clearConversation(id);
+    }
+
+    return toRemove.length;
   }
 
   /**

@@ -16,13 +16,11 @@ if (document.readyState === 'loading') {
 function initUI() {
   console.log('[UI] Initializing modular side panel...');
 
-  // Initialize the main side panel controller
   const controller = new SidePanelController();
 
-  // Set up message handling for background communication
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    console.log('[UI] Message received:', message.type, message);
     controller.handleMessage(message, sender, sendResponse);
-    // Return true if we might send a response asynchronously
     return message.type === 'GET_CONVERSATION' ||
            message.type === 'GET_CONVERSATION_HISTORY';
   });

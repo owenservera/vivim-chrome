@@ -1,3 +1,4 @@
+import { Logger } from '../../core/logging/Logger.js';
 import { MessageTypes } from '../../core/messaging/MessageTypes.js';
 import { ConversationStorage } from '../../core/storage/ConversationStorage.js';
 import { StorageManager } from '../../core/storage/StorageManager.js';
@@ -10,9 +11,17 @@ export class ConversationManager {
     this.messageBus = messageBus;
     this.storage = new ConversationStorage(new StorageManager());
     this.streamingMessages = new Map();
-    this.logger = console;
+    this.logger = new Logger('ConversationManager');
+    this.destinationManager = null;
 
     this.bindEvents();
+  }
+
+  /**
+   * Inject DestinationManager for UI broadcasting
+   */
+  setDestinationManager(manager) {
+    this.destinationManager = manager;
   }
 
   bindEvents() {
@@ -28,10 +37,15 @@ export class ConversationManager {
   }
 
   /**
-   * Send message to side panel
+   * Broadcast message to all UI surfaces
    */
-  sendToSidePanel(message) {
-    chrome.runtime.sendMessage(message).catch(() => {});
+  broadcastToUI(message) {
+    if (this.destinationManager) {
+      this.destinationManager.broadcast(message);
+    } else {
+      // Fallback
+      chrome.runtime.sendMessage(message).catch(() => {});
+    }
   }
 
   /**
@@ -42,12 +56,7 @@ export class ConversationManager {
       const tabId = message.tabId || sender?.tab?.id;
       const conversationId = message.conversationId;
 
-      console.log('[ConversationManager] USER_PROMPT received', {
-        tabId,
-        contentLength: message.content?.length,
-        conversationId,
-        message
-      });
+      this.logger.info(`USER_PROMPT received from tab ${tabId}`);
 
       // Store the message
       await this.storeMessage(tabId, {
@@ -57,8 +66,8 @@ export class ConversationManager {
         timestamp: message.timestamp || Date.now()
       });
 
-      // Notify side panel
-      this.sendToSidePanel({
+      // Notify UI
+      this.broadcastToUI({
         type: MessageTypes.MESSAGE_ADDED,
         role: "user",
         content: message.content,
@@ -67,7 +76,7 @@ export class ConversationManager {
       });
 
     } catch (error) {
-      this.logger.error('[ConversationManager] Error handling user prompt:', error);
+      this.logger.error('Error handling user prompt:', error);
     }
   }
 
@@ -78,17 +87,10 @@ export class ConversationManager {
     try {
       const tabId = message.tabId || sender?.tab?.id;
 
-      this.logger.log('[ConversationManager] STREAM_CHUNK received', {
-        tabId,
-        seq: message.seq,
-        contentLength: message.content?.length,
-        model: message.model
-      });
-
       await this.handleStreamChunkInternal(tabId, message);
 
-      // Notify side panel
-      this.sendToSidePanel({
+      // Notify UI
+      this.broadcastToUI({
         type: MessageTypes.STREAM_UPDATE,
         role: message.role,
         content: message.content,
@@ -99,7 +101,7 @@ export class ConversationManager {
       });
 
     } catch (error) {
-      this.logger.error('[ConversationManager] Error handling stream chunk:', error);
+      this.logger.error('Error handling stream chunk:', error);
     }
   }
 
@@ -111,10 +113,7 @@ export class ConversationManager {
       const tabId = message.tabId || sender?.tab?.id;
       const streamId = message.streamId;
 
-      this.logger.log('[ConversationManager] STREAM_COMPLETE received', {
-        tabId,
-        streamId
-      });
+      this.logger.info(`STREAM_COMPLETE for tab ${tabId}`, { streamId });
 
       const streamKey = "stream_" + tabId;
       const streaming = this.streamingMessages.get(streamKey);
@@ -124,14 +123,14 @@ export class ConversationManager {
         this.streamingMessages.delete(streamKey);
       }
 
-      // Notify side panel
-      this.sendToSidePanel({
+      // Notify UI
+      this.broadcastToUI({
         type: MessageTypes.STREAM_COMPLETE,
         tabId
       });
 
     } catch (error) {
-      this.logger.error('[ConversationManager] Error handling stream complete:', error);
+      this.logger.error('Error handling stream complete:', error);
     }
   }
 
@@ -141,12 +140,11 @@ export class ConversationManager {
   async handleGetConversation(message, sender, sendResponse) {
     try {
       const tabId = message.tabId || sender?.tab?.id;
-      // Implementation for getting conversation data
       const response = await this.getConversationForTab(tabId);
-      sendResponse(response);
+      if (sendResponse) sendResponse(response);
     } catch (error) {
-      this.logger.error('[ConversationManager] Error getting conversation:', error);
-      sendResponse({ messages: [], conversationId: null, url: null });
+      this.logger.error('Error getting conversation:', error);
+      if (sendResponse) sendResponse({ messages: [], conversationId: null, url: null });
     }
   }
 
@@ -158,16 +156,16 @@ export class ConversationManager {
       const tabId = message.tabId || sender?.tab?.id;
       await this.clearConversationForTab(tabId);
 
-      // Notify side panel
-      this.sendToSidePanel({
+      // Notify UI
+      this.broadcastToUI({
         type: MessageTypes.CONVERSATION_CLEARED,
         tabId
       });
 
-      sendResponse({ ok: true });
+      if (sendResponse) sendResponse({ ok: true });
     } catch (error) {
-      this.logger.error('[ConversationManager] Error clearing conversation:', error);
-      sendResponse({ ok: false });
+      this.logger.error('Error clearing conversation:', error);
+      if (sendResponse) sendResponse({ ok: false });
     }
   }
 
@@ -178,10 +176,10 @@ export class ConversationManager {
     try {
       const tabId = message.tabId || sender?.tab?.id;
       await this.startNewConversation(tabId);
-      sendResponse({ ok: true });
+      if (sendResponse) sendResponse({ ok: true });
     } catch (error) {
-      this.logger.error('[ConversationManager] Error starting new conversation:', error);
-      sendResponse({ ok: false });
+      this.logger.error('Error starting new conversation:', error);
+      if (sendResponse) sendResponse({ ok: false });
     }
   }
 
@@ -191,10 +189,10 @@ export class ConversationManager {
   async handleGetConversationHistory(message, sender, sendResponse) {
     try {
       const history = await this.getConversationHistory();
-      sendResponse({ history });
+      if (sendResponse) sendResponse({ history });
     } catch (error) {
-      this.logger.error('[ConversationManager] Error getting history:', error);
-      sendResponse({ history: [] });
+      this.logger.error('Error getting history:', error);
+      if (sendResponse) sendResponse({ history: [] });
     }
   }
 
@@ -205,10 +203,10 @@ export class ConversationManager {
     try {
       const tabId = message.tabId || sender?.tab?.id;
       await this.loadConversationFromDOM(tabId);
-      sendResponse({ ok: true });
+      if (sendResponse) sendResponse({ ok: true });
     } catch (error) {
-      this.logger.error('[ConversationManager] Error loading from DOM:', error);
-      sendResponse({ ok: false });
+      this.logger.error('Error loading from DOM:', error);
+      if (sendResponse) sendResponse({ ok: false });
     }
   }
 
@@ -220,14 +218,14 @@ export class ConversationManager {
       const conversationId = message.conversationId;
       const tabId = message.tabId || sender?.tab?.id;
       await this.loadConversation(conversationId, tabId);
-      sendResponse({ ok: true });
+      if (sendResponse) sendResponse({ ok: true });
     } catch (error) {
-      this.logger.error('[ConversationManager] Error loading conversation:', error);
-      sendResponse({ ok: false });
+      this.logger.error('Error loading conversation:', error);
+      if (sendResponse) sendResponse({ ok: false });
     }
   }
 
-  // Internal methods (extracted from original background.js)
+  // Internal methods
 
   async handleStreamChunkInternal(tabId, message) {
     const key = "stream_" + tabId;
@@ -258,7 +256,6 @@ export class ConversationManager {
           if (message.model) existing.model = message.model;
           if (message.isFinal) {
             existing.isFinal = true;
-            // Store the final message immediately
             const finalized = {
               role: "assistant",
               content: existing.content,
@@ -271,8 +268,8 @@ export class ConversationManager {
         }
       }
 
-      // Notify side panel
-      this.sendToSidePanel({
+      // Notify UI
+      this.broadcastToUI({
         type: MessageTypes.STREAM_UPDATE,
         role: "assistant",
         content: existing.content,
@@ -294,7 +291,6 @@ export class ConversationManager {
     const streaming = this.streamingMessages.get(streamKey);
     if (!streaming) return;
 
-    // Check if the final message was already stored (when isFinal flag was set)
     if (streaming.isFinal) {
       this.streamingMessages.delete(streamKey);
       return;
@@ -310,7 +306,6 @@ export class ConversationManager {
     };
 
     await this.storeMessage(tabId, finalized);
-    // Note: UI will handle finalizing the display on STREAM_COMPLETE
   }
 
   getConversationKey(tabId, conversationId) {
@@ -318,12 +313,11 @@ export class ConversationManager {
   }
 
   async getConversationForTab(tabId) {
-    // Implementation to get conversation data for a tab
     const messages = await this.storage.getConversation(`temp_${tabId}`, true);
     return {
       messages,
-      conversationId: null, // Would be retrieved from TabManager
-      url: null // Would be retrieved from TabManager
+      conversationId: null,
+      url: null
     };
   }
 
@@ -333,12 +327,10 @@ export class ConversationManager {
   }
 
   async startNewConversation(tabId) {
-    // Inject script to start new conversation
     try {
       await chrome.scripting.executeScript({
         target: { tabId },
         func: () => {
-          // ChatGPT specific selectors
           const selectors = [
             'a[href*="new"]',
             'button[aria-label*="New chat" i]',
@@ -354,7 +346,6 @@ export class ConversationManager {
             }
           }
 
-          // Fallback
           if (window.location.hostname === 'chatgpt.com' || window.location.hostname === 'chat.com') {
             window.location.href = 'https://chatgpt.com/';
           }
@@ -363,27 +354,25 @@ export class ConversationManager {
 
       await this.clearConversationForTab(tabId);
 
-      // Notify side panel
-      this.sendToSidePanel({
+      this.broadcastToUI({
         type: MessageTypes.CONVERSATION_CLEARED,
         tabId
       });
 
     } catch (error) {
-      this.logger.error('[ConversationManager] Error starting new conversation:', error);
+      this.logger.error('Error starting new conversation:', error);
     }
   }
 
   async getConversationHistory() {
-    // Implementation for conversation history
     return [];
   }
 
   async loadConversationFromDOM(tabId) {
-    // Implementation for scraping conversation from DOM
+    // Future implementation
   }
 
   async loadConversation(conversationId, tabId) {
-    // Implementation for loading specific conversation
+    // Future implementation
   }
 }

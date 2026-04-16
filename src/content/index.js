@@ -1,15 +1,9 @@
-/**
- * Content Script - Main Entry Point
- * Handles DOM injection and communication with background
- */
-
 (function init() {
   if (window.__vivimContentInitialized) return;
   window.__vivimContentInitialized = true;
 
   console.log('[Content] Initializing modular content script...');
 
-  // Set up telemetry
   window.__vivimTelemetry = {
     track: function() {
       if (typeof VIVIMTelemetry !== 'undefined') {
@@ -23,7 +17,6 @@
     }
   };
 
-  // Verify extension context
   if (typeof chrome === 'undefined' || !chrome.runtime) {
     console.error('[Content] Chrome runtime not available');
     return;
@@ -31,91 +24,60 @@
 
   console.log('[Content] Chrome runtime available, extension ID:', chrome.runtime.id);
 
-  // Set up web-bridge for communication with inject-web.js
   setupWebBridge();
-
-  // Inject save button observer
   setupSaveButtonInjection();
 
-  // Track initialization
   window.__vivimTelemetry.trackAction('content_loaded');
-
   console.log('[Content] Initialization complete');
 
 })();
 
-/**
- * Set up web-bridge communication with inject-web.js
- */
 function setupWebBridge() {
+  console.log('[Content] Initializing web bridge...');
+  
   window.addEventListener('message', (event) => {
-    const timestamp = Date.now();
-
-    if (!event.data || event.data.type !== 'web-bridge') {
+    const data = event.data;
+    
+    // Only process vivim-bridge messages from the MAIN world
+    if (!data || data.type !== 'vivim-bridge' || data.communicationId !== 'vivim-bridge') {
       return;
     }
-
-    if (event.data.communicationId !== 'inject-chat-web') {
-      return;
-    }
-
-    console.log('[Content] Received web-bridge message:', event.data.action);
-
-    // Handle handshake
-    if (event.data.action === '__handshake__') {
+    
+    console.log('[Content] Bridge event received:', data.action);
+    
+    // Handle Handshake
+    if (data.action === '__handshake__') {
       console.log('[Content] Responding to handshake');
       window.postMessage({
-        type: 'web-bridge',
-        communicationId: 'saveai-extension-content',
-        id: crypto.randomUUID(),
-        requestId: event.data.id,
-        success: true,
-        data: { success: true, timestamp },
-        timestamp
+        type: 'vivim-bridge',
+        communicationId: 'vivim-content',
+        action: '__handshake__',
+        requestId: data.id,
+        timestamp: Date.now()
       }, '*');
       return;
     }
-
-    // Forward user prompts to background
-    if (event.data.action === 'userPrompt' && event.data.data) {
-      console.log('[Content] Forwarding userPrompt to background');
-
+    
+    // Forward actions to Background
+    const typeMap = {
+      'userPrompt': 'USER_PROMPT',
+      'chatChunk': 'STREAM_CHUNK',
+      'streamComplete': 'STREAM_COMPLETE'
+    };
+    
+    const backgroundType = typeMap[data.action];
+    if (backgroundType) {
+      console.log(`[Content] Forwarding ${data.action} -> ${backgroundType}`);
       chrome.runtime.sendMessage({
-        type: 'USER_PROMPT',
-        content: event.data.data.content,
-        conversationId: event.data.data.conversationId,
+        type: backgroundType,
+        ...data.data,
         timestamp: Date.now()
-      }).catch((err) => console.error('[Content] Failed to send USER_PROMPT:', err));
-    }
-
-    // Forward chat chunks to background
-    if (event.data.action === 'chatChunk' && event.data.data) {
-      const chunk = event.data.data;
-      console.log('[Content] Forwarding chatChunk to background');
-
-      chrome.runtime.sendMessage({
-        type: 'STREAM_CHUNK',
-        ...chunk
-      }).catch((err) => console.error('[Content] Failed to send STREAM_CHUNK:', err));
-    }
-
-    // Forward stream complete to background
-    if (event.data.action === 'streamComplete') {
-      console.log('[Content] Forwarding streamComplete to background');
-
-      chrome.runtime.sendMessage({
-        type: 'STREAM_COMPLETE',
-        streamId: event.data.data?.streamId
-      }).catch((err) => console.error('[Content] Failed to send STREAM_COMPLETE:', err));
+      }).catch(err => console.error('[Content] Bridge forward failed:', err));
     }
   });
 }
 
-/**
- * Set up save button injection observer
- */
 function setupSaveButtonInjection() {
-  // Wait for body to be available
   function startObserver() {
     if (!document.body) {
       requestAnimationFrame(startObserver);
@@ -143,13 +105,9 @@ function setupSaveButtonInjection() {
     console.log('[Content] DOM observer started');
   }
 
-  // Start immediately, will retry if body not ready
   startObserver();
 }
 
-/**
- * Inject save button into ChatGPT interface
- */
 function injectSaveButton(container) {
   try {
     const btn = document.createElement('button');
@@ -167,7 +125,6 @@ function injectSaveButton(container) {
       e.stopPropagation();
       console.log('[Content] Save clicked');
 
-      // Find message content
       const messageEl = container.closest('[data-message-author]');
       let content = '';
 

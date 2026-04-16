@@ -3,24 +3,27 @@
  * Handles streaming responses from all AI providers with format abstraction
  */
 
+import { Logger } from '../logging/Logger.js';
+
 export class StreamingManager {
   constructor(messageBridge, config = {}) {
     this.messageBridge = messageBridge;
     this.activeStreams = new Map();
+    this.streamStateHistory = new Map();
     this.parsers = new Map();
-    this.logger = console;
+    this.logger = new Logger('StreamingManager');
 
-    // Configuration with defaults
     this.config = {
       maxConcurrentStreams: 5,
-      streamTimeout: 300000, // 5 minutes
+      streamTimeout: 300000,
       retryAttempts: 3,
-      retryDelay: 1000, // 1 second
+      retryDelay: 1000,
       enableMetrics: true,
+      enableStateTracking: true,
+      stateHistoryLimit: 50,
       ...config
     };
 
-    // Metrics tracking
     this.metrics = {
       totalStreams: 0,
       successfulStreams: 0,
@@ -30,8 +33,6 @@ export class StreamingManager {
     };
 
     this.registerDefaultParsers();
-
-    // Clean up stale streams periodically
     this.cleanupInterval = setInterval(() => this.cleanupStaleStreams(), 60000);
   }
 
@@ -65,9 +66,8 @@ export class StreamingManager {
 
     // Check capacity
     if (this.isAtCapacity()) {
-      const error = new Error('Streaming capacity exceeded');
-      this.logger.warn(`[StreamingManager] ${error.message}`);
-      this.handleError(streamId, error);
+      this.logger.warn(`Streaming capacity exceeded for ${streamId}`);
+      this.handleError(streamId, new Error('Streaming capacity exceeded'));
       return;
     }
 
@@ -96,7 +96,7 @@ export class StreamingManager {
       await parser.process(response);
 
     } catch (error) {
-      this.logger.error(`[StreamingManager] Error processing stream ${streamId}:`, error);
+      this.logger.error(`Error processing stream ${streamId}:`, error);
       this.handleError(streamId, error, startTime, enableRetry, { streamId, response, format, metadata });
     }
   }
@@ -118,7 +118,8 @@ export class StreamingManager {
         model: stream.metadata.model,
         seq: stream.chunks.length,
         streamId,
-        cumulative: true
+        cumulative: true,
+        isFinal: chunk.isFinal || false
       });
     }
   }
@@ -143,7 +144,7 @@ export class StreamingManager {
     // Clean up
     this.activeStreams.delete(streamId);
 
-    this.logger.log(`[StreamingManager] Stream ${streamId} completed successfully (${processingTime}ms)`);
+    this.logger.info(`Stream ${streamId} completed successfully (${processingTime}ms)`);
   }
 
   /**
@@ -155,7 +156,7 @@ export class StreamingManager {
 
     const processingTime = Date.now() - (startTime || stream.startTime);
 
-    this.logger.error(`[StreamingManager] Stream ${streamId} error:`, error);
+    this.logger.error(`Stream ${streamId} error:`, error);
 
     // Update metrics
     this.updateMetrics(streamId, false, processingTime);
@@ -197,6 +198,50 @@ export class StreamingManager {
     return chunks.map(c => c.content || '').join('');
   }
 
+  saveStreamState(streamId) {
+    if (!this.config.enableStateTracking) return null;
+
+    const stream = this.activeStreams.get(streamId);
+    if (!stream) return null;
+
+    const state = {
+      streamId,
+      metadata: stream.metadata,
+      format: stream.format,
+      chunksReceived: stream.chunks.length,
+      lastChunkSeq: stream.chunks.length,
+      timestamp: Date.now()
+    };
+
+    this.streamStateHistory.set(streamId, state);
+
+    if (this.streamStateHistory.size > this.config.stateHistoryLimit) {
+      const oldestKey = this.streamStateHistory.keys().next().value;
+      this.streamStateHistory.delete(oldestKey);
+    }
+
+    return state;
+  }
+
+  getStreamState(streamId) {
+    if (this.activeStreams.has(streamId)) {
+      return this.saveStreamState(streamId);
+    }
+    return this.streamStateHistory.get(streamId) || null;
+  }
+
+  getStreamProgress(streamId) {
+    const stream = this.activeStreams.get(streamId);
+    if (!stream) return null;
+
+    return {
+      streamId,
+      chunksReceived: stream.chunks.length,
+      contentLength: stream.chunks.reduce((acc, c) => acc + (c.content?.length || 0), 0),
+      elapsed: Date.now() - stream.startTime
+    };
+  }
+
   /**
    * Cancel active stream
    */
@@ -205,6 +250,11 @@ export class StreamingManager {
     if (stream && stream.parser.cancel) {
       stream.parser.cancel();
     }
+
+    if (this.config.enableStateTracking) {
+      this.saveStreamState(streamId);
+    }
+
     this.activeStreams.delete(streamId);
   }
 

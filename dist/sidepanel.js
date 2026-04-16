@@ -1,6 +1,376 @@
-/**
- * VIVIM Extension - Modular Build
- * Built: 2026-04-15T12:44:47.955Z
- * Version: 0.0.1
- */
-(()=>{var s={USER_PROMPT:"USER_PROMPT",SEND_PROMPT:"SEND_PROMPT",CLEAR_CONVERSATION:"CLEAR_CONVERSATION",START_NEW_CONVERSATION:"START_NEW_CONVERSATION",STREAM_CHUNK:"STREAM_CHUNK",STREAM_COMPLETE:"STREAM_COMPLETE",STREAM_UPDATE:"STREAM_UPDATE",GET_CONVERSATION:"GET_CONVERSATION",LOAD_CONVERSATION:"LOAD_CONVERSATION",LOAD_CONVERSATION_FROM_DOM:"LOAD_CONVERSATION_FROM_DOM",SAVE_FROM_DOM:"SAVE_FROM_DOM",CONVERSATION_LOADED:"CONVERSATION_LOADED",CONVERSATION_CLEARED:"CONVERSATION_CLEARED",MESSAGE_ADDED:"MESSAGE_ADDED",GET_CONVERSATION_HISTORY:"GET_CONVERSATION_HISTORY",UPDATE_CONVERSATION_HISTORY:"UPDATE_CONVERSATION_HISTORY",TAB_DETECTED:"TAB_DETECTED",TAB_ACTIVATED:"TAB_ACTIVATED",GET_TAB_STATUS:"GET_TAB_STATUS",REGISTER_DESTINATION:"REGISTER_DESTINATION",UNREGISTER_DESTINATION:"UNREGISTER_DESTINATION",LIST_DESTINATIONS:"LIST_DESTINATIONS",BRIDGE_MESSAGE:"BRIDGE_MESSAGE",BRIDGE_HANDSHAKE:"BRIDGE_HANDSHAKE",UI_READY:"UI_READY",PROVIDER_CHANGED:"PROVIDER_CHANGED",SEARCH_QUERY:"SEARCH_QUERY",PING:"PING",PONG:"PONG",ERROR:"ERROR"},d={[s.USER_PROMPT]:{required:["content"],optional:["conversationId","timestamp","tabId"]},[s.STREAM_CHUNK]:{required:["role","content"],optional:["model","seq","streamId","timestamp","tabId"]},[s.GET_CONVERSATION]:{required:[],optional:["tabId","conversationId"]}};var a=class{constructor(){this.currentTabId=null,this.currentProvider={id:"chatgpt",name:"ChatGPT",color:"#10A37F"},this.messageList=[],this.streamingMessage=null,this.logger=console,this.init()}init(){this.messagesArea=document.getElementById("messagesArea"),this.emptyState=document.getElementById("emptyState"),this.promptInput=document.getElementById("promptInput"),this.sendBtn=document.getElementById("sendBtn"),this.bindEvents(),this.initializeWithCurrentTab()}bindEvents(){this.promptInput&&(this.promptInput.addEventListener("input",()=>this.onInputChange()),this.promptInput.addEventListener("keydown",e=>this.onInputKeyDown(e))),this.sendBtn&&this.sendBtn.addEventListener("click",()=>this.sendPrompt()),chrome.tabs.onActivated.addListener(e=>{this.currentTabId=e.tabId,this.loadConversation()})}async initializeWithCurrentTab(){let e=await chrome.tabs.query({active:!0,currentWindow:!0});e[0]&&(this.currentTabId=e[0].id,this.loadConversation())}handleMessage(e,t,n){if(console.log("[SidePanel] Received message:",e.type,e),e.tabId&&e.tabId!==this.currentTabId){console.log("[SidePanel] Ignoring message for different tab:",e.tabId,"current:",this.currentTabId);return}switch(e.type){case s.MESSAGE_ADDED:this.addMessage(e.role,e.content,e.model,e.timestamp);break;case s.STREAM_UPDATE:this.updateStreamingMessage(e.content,e.model,e.seq,e.isFinal);break;case s.STREAM_COMPLETE:this.finalizeStreamingMessage();break;case s.CONVERSATION_CLEARED:this.clearMessages();break;case s.CONVERSATION_LOADED:this.loadMessages(e.messages);break}}async sendPrompt(){let e=this.promptInput?.value?.trim();if(!e||!this.currentTabId){console.log("[SidePanel] Cannot send: text empty or no currentTabId",{text:!!e,currentTabId:this.currentTabId});return}console.log("[SidePanel] Sending prompt:",e,"to tab:",this.currentTabId),this.promptInput.value="",this.onInputChange(),chrome.runtime.sendMessage({type:s.USER_PROMPT,content:e,conversationId:null,timestamp:Date.now()}).then(()=>{console.log("[SidePanel] USER_PROMPT sent successfully")}).catch(t=>{this.logger.error("[SidePanel] Failed to send USER_PROMPT:",t)});try{await chrome.scripting.executeScript({target:{tabId:this.currentTabId},func:t=>{let n=document.querySelector("form textarea");n&&(n.value=t,n.dispatchEvent(new Event("input",{bubbles:!0})),setTimeout(()=>{let i=new KeyboardEvent("keydown",{bubbles:!0,key:"Enter",code:"Enter",keyCode:13});n.dispatchEvent(i)},200))},args:[e]})}catch(t){this.logger.error("[SidePanel] Send failed:",t)}}addMessage(e,t,n,i){this.messageList.push({role:e,content:t,model:n,timestamp:i}),this.renderMessages()}updateStreamingMessage(e,t,n,i=!1){this.streamingMessage||(this.streamingMessage=document.createElement("div"),this.streamingMessage.className="msg msg--assistant msg--streaming",this.messagesArea?.appendChild(this.streamingMessage),this.emptyState?.classList.add("hidden")),this.streamingMessage.textContent=e,this.messagesArea?.scrollTo(0,this.messagesArea.scrollHeight),i&&this.finalizeStreamingMessage()}finalizeStreamingMessage(){if(this.streamingMessage){if(this.streamingMessage.classList.remove("msg--streaming"),!this.streamingMessage.querySelector(".msg__meta")){let e=document.createElement("div");e.className="msg__meta";let t=document.createElement("span");t.textContent=this.formatTime(Date.now()),e.appendChild(t),this.streamingMessage.appendChild(e)}this.streamingMessage=null}}clearMessages(){this.messageList=[],this.renderMessages()}loadMessages(e){this.messageList=e||[],this.renderMessages()}renderMessages(){this.messagesArea&&(this.messagesArea.innerHTML="",this.messageList.length===0?(this.messagesArea.appendChild(this.emptyState),this.emptyState?.classList.remove("hidden")):(this.emptyState?.classList.add("hidden"),this.messageList.forEach(e=>{let t=document.createElement("div");t.className=`msg msg--${e.role}`,t.innerHTML=`<div class="msg__content">${this.escapeHtml(e.content)}</div>`,this.messagesArea.appendChild(t)})))}async loadConversation(){this.currentTabId&&chrome.runtime.sendMessage({type:s.GET_CONVERSATION,tabId:this.currentTabId},e=>{e&&e.messages&&this.loadMessages(e.messages)})}onInputChange(){this.sendBtn&&(this.sendBtn.disabled=!this.promptInput?.value?.trim())}onInputKeyDown(e){e.key==="Enter"&&!e.shiftKey&&(e.preventDefault(),this.sendPrompt())}formatTime(e){return new Date(e).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}escapeHtml(e){let t=document.createElement("div");return t.textContent=e,t.innerHTML}};document.readyState==="loading"?document.addEventListener("DOMContentLoaded",o):o();function o(){console.log("[UI] Initializing modular side panel...");let r=new a;chrome.runtime.onMessage.addListener((e,t,n)=>(r.handleMessage(e,t,n),e.type==="GET_CONVERSATION"||e.type==="GET_CONVERSATION_HISTORY")),console.log("[UI] Side panel initialized")}})();
+// VIVIM POC — Side Panel Script
+// Chat rendering + send prompt via scripting API
+
+(function () {
+  "use strict";
+
+  // ─── DOM References ───
+  const messagesArea = document.getElementById("messagesArea");
+  const emptyState = document.getElementById("emptyState");
+  const promptInput = document.getElementById("promptInput");
+  const sendBtn = document.getElementById("sendBtn");
+  const statusDot = document.getElementById("statusDot");
+  const statusText = document.getElementById("statusText");
+  const msgCount = document.getElementById("msgCount");
+  const clearBtn = document.getElementById("clearBtn");
+
+  // ─── State ───
+  let currentTabId = null;
+  let messageList = [];
+  let isStreaming = false;
+  let streamingMsgEl = null;
+
+  // ─── Init ───
+  function init() {
+    // Get current tab
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (tabs[0]) {
+        currentTabId = tabs[0].id;
+        checkTabStatus();
+        loadConversation();
+      }
+    });
+
+    // Listen for messages from content script (via background)
+    chrome.runtime.onMessage.addListener(handleBackgroundMessage);
+
+    // Listen for tab activation — update currentTabId on tab switch
+    chrome.tabs.onActivated.addListener((activeInfo) => {
+      currentTabId = activeInfo.tabId;
+      streamingMsgEl = null; // clean up any live streaming element
+      loadConversation();
+      checkTabStatus();
+    });
+
+    // Input handling
+    promptInput.addEventListener("input", onInputChange);
+    promptInput.addEventListener("keydown", onInputKeyDown);
+    sendBtn.addEventListener("click", sendPrompt);
+    clearBtn.addEventListener("click", clearConversation);
+
+    setStatus("disconnected", "No ChatGPT tab");
+  }
+
+  // ─── Tab Status ───
+  function checkTabStatus() {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (tabs[0]) {
+        const url = tabs[0].url || "";
+        const domain = url.includes("chat.com") ? "Chat" : url.includes("chatgpt.com") ? "ChatGPT" : "";
+        if (domain) {
+          setStatus("connected", `${domain} active`);
+        } else {
+          setStatus("disconnected", "No ChatGPT tab");
+        }
+      }
+    });
+  }
+
+  function setStatus(state, label) {
+    statusDot.className = "status-dot";
+    if (state === "connected") statusDot.classList.add("status-dot--connected");
+    if (state === "streaming") statusDot.classList.add("status-dot--streaming");
+    statusText.textContent = label;
+  }
+
+  // ─── Conversation Load ───
+  function loadConversation() {
+    chrome.runtime.sendMessage({ type: "GET_CONVERSATION", tabId: currentTabId }, (response) => {
+      if (chrome.runtime.lastError) return;
+      if (response?.messages?.length > 0) {
+        messageList = response.messages;
+        renderAllMessages();
+      }
+    });
+  }
+
+  // ─── Background Messages ───
+  function handleBackgroundMessage(msg) {
+    console.log("[VIVIM POC] 📨 Background message received:", msg.type, "currentTabId:", currentTabId, "msg.tabId:", msg.tabId);
+
+    // Only process messages relevant to the currently tracked tab
+    if (msg.tabId && msg.tabId !== currentTabId) {
+      console.log("[VIVIM POC] ⏭️ Ignoring message for different tab:", msg.tabId, "!==", currentTabId);
+      return;
+    }
+
+    switch (msg.type) {
+      case "MESSAGE_ADDED":
+        addMessage(msg.role, msg.content, null, msg.timestamp);
+        break;
+
+      case "STREAM_UPDATE":
+        console.log("[VIVIM POC] 🌊 STREAM_UPDATE received, content length:", msg.content?.length);
+        updateStreamingMessage(msg.content, msg.model);
+        break;
+
+      case "STREAM_COMPLETE":
+        console.log("[VIVIM POC] ✅ STREAM_COMPLETE received");
+        finalizeStreamingMessage();
+        break;
+
+      case "CONVERSATION_CLEARED":
+        messageList = [];
+        messagesArea.innerHTML = "";
+        messagesArea.appendChild(emptyState);
+        emptyState.classList.remove("hidden");
+        updateMsgCount();
+        break;
+
+      case "TAB_DETECTED":
+        if (msg.platform === "chatgpt") {
+          const domain = msg.url?.includes("chat.com") ? "Chat" : "ChatGPT";
+          setStatus("connected", `${domain} detected`);
+        }
+        break;
+
+      case "SAVE_TRIGGERED":
+        console.log("[VIVIM POC] Save triggered from DOM at", msg.timestamp);
+        break;
+    }
+  }
+
+  // ─── Render Messages ───
+  function renderAllMessages() {
+    messagesArea.innerHTML = "";
+    messagesArea.appendChild(emptyState);
+
+    if (messageList.length === 0) {
+      emptyState.classList.remove("hidden");
+    } else {
+      emptyState.classList.add("hidden");
+      messageList.forEach((msg) => {
+        const el = createMessageEl(msg.role, msg.content, msg.model, msg.timestamp);
+        messagesArea.appendChild(el);
+      });
+    }
+
+    updateMsgCount();
+    scrollToBottom();
+  }
+
+  function addMessage(role, content, model, timestamp) {
+    emptyState.classList.add("hidden");
+
+    const el = createMessageEl(role, content, model, timestamp);
+    messagesArea.appendChild(el);
+
+    messageList.push({ role, content, model, timestamp: timestamp || Date.now() });
+    updateMsgCount();
+    scrollToBottom();
+  }
+
+  function createMessageEl(role, content, model, timestamp) {
+    const el = document.createElement("div");
+    el.className = `msg msg--${role}`;
+
+    const contentEl = document.createElement("div");
+    contentEl.className = "msg__content";
+    contentEl.textContent = content;
+    el.appendChild(contentEl);
+
+    if (model || timestamp) {
+      const metaEl = document.createElement("div");
+      metaEl.className = "msg__meta";
+
+      if (model) {
+        const modelSpan = document.createElement("span");
+        modelSpan.className = "msg__model";
+        modelSpan.textContent = model;
+        metaEl.appendChild(modelSpan);
+      }
+
+      if (timestamp) {
+        const timeSpan = document.createElement("span");
+        timeSpan.textContent = formatTime(timestamp);
+        metaEl.appendChild(timeSpan);
+      }
+
+      el.appendChild(metaEl);
+    }
+
+    return el;
+  }
+
+  // ─── Streaming Message ───
+  function updateStreamingMessage(content, model) {
+    if (!streamingMsgEl) {
+      // Create new streaming message
+      emptyState.classList.add("hidden");
+      streamingMsgEl = document.createElement("div");
+      streamingMsgEl.className = "msg msg--assistant msg--streaming";
+
+      const contentEl = document.createElement("div");
+      contentEl.className = "msg__content";
+      contentEl.textContent = content;
+      streamingMsgEl.appendChild(contentEl);
+
+      if (model) {
+        const metaEl = document.createElement("div");
+        metaEl.className = "msg__meta";
+        const modelSpan = document.createElement("span");
+        modelSpan.className = "msg__model";
+        modelSpan.textContent = model;
+        metaEl.appendChild(modelSpan);
+        streamingMsgEl.appendChild(metaEl);
+      }
+
+      messagesArea.appendChild(streamingMsgEl);
+      setStatus("streaming", "Streaming...");
+    } else {
+      // Update existing
+      const contentEl = streamingMsgEl.querySelector(".msg__content");
+      if (contentEl) contentEl.textContent = content;
+    }
+
+    scrollToBottom();
+  }
+
+  function finalizeStreamingMessage() {
+    if (streamingMsgEl) {
+      streamingMsgEl.classList.remove("msg--streaming");
+
+      // Extract content from the streaming element
+      const content = streamingMsgEl.querySelector(".msg__content")?.textContent || "";
+      const model = streamingMsgEl.querySelector(".msg__model")?.textContent || "";
+
+      // Add to message list
+      messageList.push({
+        role: "assistant",
+        content,
+        model,
+        timestamp: Date.now(),
+        streamed: true,
+      });
+
+      streamingMsgEl = null;
+      updateMsgCount();
+    }
+
+    setStatus("connected", "ChatGPT active");
+  }
+
+  // ─── Send Prompt ───
+  async function sendPrompt() {
+    const text = promptInput.value.trim();
+    if (!text || !currentTabId) return;
+
+    // Clear input
+    promptInput.value = "";
+    sendBtn.disabled = true;
+    promptInput.style.height = "42px";
+
+    // Inject prompt into ChatGPT's own UI — let ChatGPT make the API call.
+    // Our fetch() hook in content.js will intercept it and capture the message.
+    // This avoids 403/400 errors from guessing the API format.
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId: currentTabId },
+        func: injectPromptIntoChatGPT,
+        args: [text],
+      });
+      // Only show user message after confirmed successful inject
+      addMessage("user", text, null, Date.now());
+    } catch (e) {
+      console.error("[VIVIM POC] Failed to inject prompt:", e);
+      sendBtn.disabled = false; // re-enable so user can retry
+    }
+  }
+
+  // This function runs IN THE PAGE CONTEXT (ChatGPT tab)
+  // It must be fully self-contained — no closures, no imports.
+  // Strategy: find ChatGPT's textarea, use synthetic InputEvent to set value, click send.
+  function injectPromptIntoChatGPT(prompt) {
+    // Find the textarea - ChatGPT uses different IDs depending on version
+    let el = document.getElementById("prompt-textarea") || 
+            document.querySelector('textarea[id*="prompt"]') ||
+            document.querySelector('textarea[aria-label*="message"]') ||
+            document.querySelector('textarea');
+    
+    if (!el) {
+      console.error("[VIVIM POC] Could not find ChatGPT textarea");
+      return;
+    }
+
+    // Use synthetic InputEvent — reliable for React-controlled textareas
+    const nativeInputSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
+    nativeInputSetter.call(el, prompt);
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+
+    el.focus();
+
+    // Find send button - try multiple selectors
+    setTimeout(() => {
+      const btn = document.querySelector('button[data-testid="send-button"]') ||
+                document.querySelector('button[aria-label="Send"]') ||
+                document.querySelector('button:disabled')?.closest('button') ||
+                Array.from(document.querySelectorAll('button')).find(b => b.textContent?.toLowerCase().includes('send'));
+      if (btn) btn.click();
+    }, 100);
+  }
+
+  // ─── Input Handling ───
+  function onInputChange() {
+    const hasText = promptInput.value.trim().length > 0;
+    sendBtn.disabled = !hasText;
+
+    // Auto-resize textarea (max 120px)
+    promptInput.style.height = "42px";
+    promptInput.style.height = Math.min(promptInput.scrollHeight, 120) + "px";
+  }
+
+  function onInputKeyDown(e) {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      if (promptInput.value.trim()) {
+        sendPrompt();
+      }
+    }
+  }
+
+  // ─── Clear ───
+  function clearConversation() {
+    messageList = [];
+    messagesArea.innerHTML = "";
+    messagesArea.appendChild(emptyState);
+    emptyState.classList.remove("hidden");
+    updateMsgCount();
+
+    // Fix #1: include tabId so background resolves correct storage key
+    chrome.runtime.sendMessage({ type: "CLEAR_CONVERSATION", tabId: currentTabId });
+
+    // Also trigger in page context
+    if (currentTabId) {
+      chrome.scripting.executeScript({
+        target: { tabId: currentTabId },
+        func: () => {
+          // Navigate to new conversation
+          if (window.location.hostname === "chat.com") {
+            window.location.href = "https://chat.com/";
+          } else {
+            window.location.href = "https://chatgpt.com/";
+          }
+        },
+      });
+    }
+  }
+
+  // ─── Helpers ───
+  function updateMsgCount() {
+    msgCount.textContent = `${messageList.length} message${messageList.length !== 1 ? "s" : ""}`;
+  }
+
+  function scrollToBottom() {
+    requestAnimationFrame(() => {
+      messagesArea.scrollTop = messagesArea.scrollHeight;
+    });
+  }
+
+  function formatTime(ts) {
+    const d = new Date(ts);
+    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  }
+
+  // ─── Start ───
+  init();
+})();

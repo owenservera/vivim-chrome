@@ -281,7 +281,12 @@
   // It must be fully self-contained — no closures, no imports.
   // Strategy: find ChatGPT's textarea, use synthetic InputEvent to set value, click send.
   function injectPromptIntoChatGPT(prompt) {
-    const el = document.getElementById("prompt-textarea");
+    // Find the textarea - ChatGPT uses different IDs depending on version
+    let el = document.getElementById("prompt-textarea") || 
+            document.querySelector('textarea[id*="prompt"]') ||
+            document.querySelector('textarea[aria-label*="message"]') ||
+            document.querySelector('textarea');
+    
     if (!el) {
       console.error("[VIVIM POC] Could not find ChatGPT textarea");
       return;
@@ -294,8 +299,12 @@
 
     el.focus();
 
+    // Find send button - try multiple selectors
     setTimeout(() => {
-      const btn = document.querySelector('button[data-testid="send-button"]');
+      const btn = document.querySelector('button[data-testid="send-button"]') ||
+                document.querySelector('button[aria-label="Send"]') ||
+                document.querySelector('button:disabled')?.closest('button') ||
+                Array.from(document.querySelectorAll('button')).find(b => b.textContent?.toLowerCase().includes('send'));
       if (btn) btn.click();
     }, 100);
   }

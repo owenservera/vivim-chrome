@@ -1,5 +1,7 @@
+import { Logger } from '../logging/Logger.js';
+
 /**
- * Abstracted storage manager with caching and batching
+ * Enhanced Storage Manager with caching, batching, and migration support
  */
 export class StorageManager {
   constructor(storage = chrome.storage.local, options = {}) {
@@ -7,54 +9,90 @@ export class StorageManager {
     this.cache = new Map();
     this.pendingWrites = new Map();
     this.writeTimeout = null;
-    this.logger = options.logger || console;
+    this.logger = new Logger('StorageManager');
 
-    this.writeDelay = options.writeDelay || 500; // ms
+    this.writeDelay = options.writeDelay || 500;
     this.maxRetries = options.maxRetries || 3;
+    this.schemaVersion = options.schemaVersion || 1;
+    this.migrations = options.migrations || [];
+  }
+
+  /**
+   * Run schema migrations
+   */
+  async migrate() {
+    const versionKey = '_schemaVersion';
+    let currentVersion = await this.get(versionKey);
+
+    if (currentVersion === undefined) {
+      currentVersion = 0;
+      await this.set(versionKey, this.schemaVersion);
+    }
+
+    if (currentVersion < this.schemaVersion) {
+      this.logger.info(`Migrating storage from v${currentVersion} to v${this.schemaVersion}`);
+
+      for (let v = currentVersion; v < this.schemaVersion; v++) {
+        const migration = this.migrations[v];
+        if (migration) {
+          try {
+            await migration(this);
+          } catch (error) {
+            this.logger.error(`Migration failed at v${v}:`, error);
+            throw error;
+          }
+        }
+      }
+
+      await this.set(versionKey, this.schemaVersion);
+      this.logger.info('Migration complete');
+    }
+  }
+
+  /**
+   * Legacy method for running migrations
+   */
+  async runMigrations() {
+    return this.migrate();
+  }
+
+  /**
+   * Register a migration function
+   */
+  registerMigration(version, migrationFn) {
+    this.migrations[version] = migrationFn;
   }
 
   /**
    * Get value from storage with caching
-   * @param {string} key - Storage key
-   * @returns {Promise<any>} Stored value
    */
   async get(key) {
-    // Check cache first
     if (this.cache.has(key)) {
       return this.cache.get(key);
     }
 
     try {
       const result = await this.storage.get(key);
-      const value = result[key];
-
-      // Cache the result
+      const value = result ? result[key] : undefined;
       this.cache.set(key, value);
-
       return value;
     } catch (error) {
-      this.logger.error(`[StorageManager] Get failed for key ${key}:`, error);
+      this.logger.error(`Get failed for key ${key}:`, error);
       throw error;
     }
   }
 
   /**
    * Set value in storage with debounced batching
-   * @param {string} key - Storage key
-   * @param {any} value - Value to store
    */
   async set(key, value) {
-    // Update cache immediately
     this.cache.set(key, value);
-
-    // Queue write operation
     this.pendingWrites.set(key, value);
     this.scheduleWrite();
   }
 
   /**
    * Remove value from storage
-   * @param {string} key - Storage key
    */
   async remove(key) {
     this.cache.delete(key);
@@ -63,35 +101,31 @@ export class StorageManager {
     try {
       await this.storage.remove(key);
     } catch (error) {
-      this.logger.error(`[StorageManager] Remove failed for key ${key}:`, error);
+      this.logger.error(`Remove failed for key ${key}:`, error);
       throw error;
     }
   }
 
   /**
-   * Get all keys matching pattern
-   * @param {string} pattern - Key pattern (supports wildcards)
-   * @returns {Promise<Array<string>>} Matching keys
+   * Get all keys matching a simple pattern
    */
   async getKeys(pattern = '*') {
     try {
       const allData = await this.storage.get(null);
       const keys = Object.keys(allData);
 
-      if (pattern === '*') {
-        return keys;
-      }
+      if (pattern === '*') return keys;
 
-      // Simple pattern matching (can be enhanced)
-      return keys.filter(key => key.includes(pattern.replace('*', '')));
+      const regex = new RegExp('^' + pattern.split('*').join('.*') + '$');
+      return keys.filter(key => regex.test(key));
     } catch (error) {
-      this.logger.error(`[StorageManager] Get keys failed for pattern ${pattern}:`, error);
+      this.logger.error(`Get keys failed for pattern ${pattern}:`, error);
       throw error;
     }
   }
 
   /**
-   * Clear all storage
+   * Clear all storage and cache
    */
   async clear() {
     this.cache.clear();
@@ -104,43 +138,40 @@ export class StorageManager {
     try {
       await this.storage.clear();
     } catch (error) {
-      this.logger.error('[StorageManager] Clear failed:', error);
+      this.logger.error('Clear failed:', error);
       throw error;
     }
   }
 
   /**
-   * Schedule a batched write operation
    * @private
    */
   scheduleWrite() {
     if (this.writeTimeout) return;
-
-    this.writeTimeout = setTimeout(() => {
-      this.flushWrites();
-    }, this.writeDelay);
+    this.writeTimeout = setTimeout(() => this.flushWrites(), this.writeDelay);
   }
 
   /**
-   * Flush all pending writes to storage
    * @private
    */
   async flushWrites() {
-    if (this.pendingWrites.size === 0) return;
+    if (this.pendingWrites.size === 0) {
+      this.writeTimeout = null;
+      return;
+    }
 
     const writes = Object.fromEntries(this.pendingWrites);
     const keys = Array.from(this.pendingWrites.keys());
 
     try {
       await this.storage.set(writes);
-      this.logger.debug(`[StorageManager] Flushed ${keys.length} writes:`, keys);
+      this.logger.debug(`Flushed ${keys.length} writes`, { keys });
       this.pendingWrites.clear();
     } catch (error) {
-      this.logger.error(`[StorageManager] Flush failed for keys ${keys}:`, error);
-
-      // Retry logic could be added here
+      this.logger.error(`Flush failed for keys: ${keys.join(', ')}`, error);
+      // Retrying logic here could be risky, but let's keep the existing simple retry
       if (this.maxRetries > 0) {
-        this.logger.warn(`[StorageManager] Retrying flush in ${this.writeDelay}ms`);
+        this.logger.warn(`Retrying flush in ${this.writeDelay}ms`);
         setTimeout(() => this.flushWrites(), this.writeDelay);
       }
     } finally {
@@ -150,7 +181,6 @@ export class StorageManager {
 
   /**
    * Force immediate flush of pending writes
-   * @returns {Promise<void>}
    */
   async flush() {
     if (this.writeTimeout) {
@@ -161,10 +191,9 @@ export class StorageManager {
   }
 
   /**
-   * Get cache statistics
-   * @returns {Object} Cache stats
+   * Get storage and cache statistics
    */
-  getCacheStats() {
+  getStats() {
     return {
       cachedKeys: this.cache.size,
       pendingWrites: this.pendingWrites.size,

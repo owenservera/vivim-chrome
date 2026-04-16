@@ -1,25 +1,22 @@
 import { BaseProvider } from './BaseProvider.js';
+import { Logger } from '../logging/Logger.js';
 
-/**
- * Provider registry for managing AI platform integrations
- */
 export class ProviderRegistry {
-  constructor() {
+  constructor(options = {}) {
     this.providers = new Map();
-    this.logger = console;
+    this.priorities = new Map();
+    this.logger = new Logger('ProviderRegistry');
+    this.defaultPriority = options.defaultPriority || 100;
   }
 
-  /**
-   * Register a provider
-   * @param {BaseProvider} provider - Provider instance
-   */
-  register(provider) {
+  register(provider, priority = null) {
     if (!(provider instanceof BaseProvider)) {
       throw new Error('Provider must extend BaseProvider');
     }
 
     this.providers.set(provider.id, provider);
-    this.logger.log(`[ProviderRegistry] Registered provider: ${provider.name}`);
+    this.priorities.set(provider.id, priority ?? this.defaultPriority);
+    this.logger.info(`Registered provider: ${provider.name} (priority: ${this.getPriority(provider.id)})`);
   }
 
   /**
@@ -43,54 +40,51 @@ export class ProviderRegistry {
     return this.providers.get(providerId) || null;
   }
 
-  /**
-   * Get all registered providers
-   * @returns {Array<BaseProvider>} Array of providers
-   */
   getAllProviders() {
     return Array.from(this.providers.values());
   }
 
-  /**
-   * Find provider that matches URL
-   * @param {string} url - URL to match
-   * @returns {BaseProvider|null} Matching provider or null
-   */
+  getPriority(providerId) {
+    return this.priorities.get(providerId) ?? this.defaultPriority;
+  }
+
+  setPriority(providerId, priority) {
+    if (!this.providers.has(providerId)) {
+      throw new Error(`Provider ${providerId} not found`);
+    }
+    this.priorities.set(providerId, priority);
+  }
+
+  getProvidersByPriority() {
+    return Array.from(this.providers.values())
+      .sort((a, b) => this.getPriority(b.id) - this.getPriority(a.id));
+  }
+
   findProviderByUrl(url) {
-    for (const provider of this.providers.values()) {
-      if (provider.matchesUrl(url)) {
-        return provider;
-      }
-    }
-    return null;
+    const matches = Array.from(this.providers.values())
+      .filter(p => p.matchesUrl(url))
+      .sort((a, b) => this.getPriority(b.id) - this.getPriority(a.id));
+    return matches[0] || null;
   }
 
-  /**
-   * Find provider that matches request context
-   * @param {Object} ctx - Request context
-   * @returns {BaseProvider|null} Matching provider or null
-   */
   findProviderByRequest(ctx) {
-    for (const provider of this.providers.values()) {
-      if (provider.matchRequest(ctx)) {
-        return provider;
-      }
-    }
-    return null;
+    const matches = Array.from(this.providers.values())
+      .filter(p => p.matchRequest(ctx))
+      .sort((a, b) => this.getPriority(b.id) - this.getPriority(a.id));
+    return matches[0] || null;
   }
 
-  /**
-   * Find provider that matches response context
-   * @param {Object} ctx - Response context
-   * @returns {BaseProvider|null} Matching provider or null
-   */
   findProviderByResponse(ctx) {
-    for (const provider of this.providers.values()) {
-      if (provider.matchResponse(ctx)) {
-        return provider;
-      }
-    }
-    return null;
+    const matches = Array.from(this.providers.values())
+      .filter(p => p.matchResponse(ctx))
+      .sort((a, b) => this.getPriority(b.id) - this.getPriority(a.id));
+    return matches[0] || null;
+  }
+
+  findAllMatchingProviders(ctx) {
+    return Array.from(this.providers.values())
+      .filter(p => p.matchRequest(ctx))
+      .sort((a, b) => this.getPriority(b.id) - this.getPriority(a.id));
   }
 
   /**

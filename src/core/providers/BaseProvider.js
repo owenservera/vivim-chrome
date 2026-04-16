@@ -1,6 +1,3 @@
-/**
- * Base provider class for AI platform integrations
- */
 export class BaseProvider {
   constructor(config = {}) {
     this.id = config.id;
@@ -14,64 +11,33 @@ export class BaseProvider {
     };
     this.config = config;
     this.logger = config.logger || console;
+    this.bridge = null;
+    this.interceptPatterns = config.interceptPatterns || {};
   }
-
-  /**
-   * Check if this provider should handle the request
-   * @param {Object} ctx - Request context
-   * @returns {boolean} Whether to handle the request
-   */
+  
   matchRequest(ctx) {
-    return false; // Override in subclasses
+    return false;
   }
-
-  /**
-   * Handle outgoing request
-   * @param {Object} ctx - Request context
-   */
+  
   onRequest(ctx) {
-    // Override in subclasses
   }
-
-  /**
-   * Check if this provider should handle the response
-   * @param {Object} ctx - Response context
-   * @returns {boolean} Whether to handle the response
-   */
+  
   matchResponse(ctx) {
-    return false; // Override in subclasses
+    return false;
   }
-
-  /**
-   * Handle incoming response
-   * @param {Object} ctx - Response context
-   */
+  
   async onResponse(ctx) {
-    // Override in subclasses
   }
-
-  /**
-   * Get authentication headers for this provider
-   * @returns {Object} Headers object
-   */
+  
   getAuthHeaders() {
     return {};
   }
-
-  /**
-   * Check if URL belongs to this provider
-   * @param {string} url - URL to check
-   * @returns {boolean} Whether URL matches provider
-   */
+  
   matchesUrl(url) {
     if (!url) return false;
     return this.hosts.some(host => url.includes(host));
   }
-
-  /**
-   * Get provider metadata
-   * @returns {Object} Provider info
-   */
+  
   getInfo() {
     return {
       id: this.id,
@@ -79,5 +45,37 @@ export class BaseProvider {
       hosts: this.hosts,
       capabilities: this.capabilities
     };
+  }
+  
+  setBridge(bridge) {
+    this.bridge = bridge;
+  }
+  
+  getBridge() {
+    return this.bridge;
+  }
+  
+  sendToBridge(action, data) {
+    if (this.bridge) {
+      this.bridge.send(action, data);
+    }
+  }
+  
+  invokeBridge(action, data) {
+    if (this.bridge) {
+      return this.bridge.invoke(action, data);
+    }
+    return Promise.reject(new Error('Bridge not initialized'));
+  }
+  
+  matchesPattern(url, pattern) {
+    if (!pattern || !url) return false;
+    if (pattern instanceof RegExp) {
+      return pattern.test(url);
+    }
+    if (typeof pattern === 'string') {
+      return url.includes(pattern);
+    }
+    return false;
   }
 }

@@ -1,7 +1,7 @@
 {
-  "name": "vivim-poc",
-  "version": "0.0.1",
-  "description": "VIVIM POC — Multi-Provider Chat Mirroring",
+  "name": "vivim-extension",
+  "version": "2.0.0",
+  "description": "VIVIM Extension v2.0 — Multi-Provider AI Assistant",
   "type": "module",
   "scripts": {
     "build": "node build.mjs",

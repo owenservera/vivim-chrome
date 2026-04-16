@@ -1,12 +1,775 @@
-/**
- * VIVIM Extension - Modular Build
- * Built: 2026-04-15T12:44:47.955Z
- * Version: 0.0.1
- */
-(()=>{var f=class{constructor(e={}){this.id=e.id,this.name=e.name||e.id,this.hosts=e.hosts||[],this.capabilities={supportsStreaming:!1,supportsAuth:!1,messageFormat:"standard",...e.capabilities},this.config=e,this.logger=e.logger||console}matchRequest(e){return!1}onRequest(e){}matchResponse(e){return!1}async onResponse(e){}getAuthHeaders(){return{}}matchesUrl(e){return e?this.hosts.some(t=>e.includes(t)):!1}getInfo(){return{id:this.id,name:this.name,hosts:this.hosts,capabilities:this.capabilities}}};var _=class{constructor(){this.providers=new Map,this.logger=console}register(e){if(!(e instanceof f))throw new Error("Provider must extend BaseProvider");this.providers.set(e.id,e),this.logger.log(`[ProviderRegistry] Registered provider: ${e.name}`)}unregister(e){let t=this.providers.get(e);t&&(this.providers.delete(e),this.logger.log(`[ProviderRegistry] Unregistered provider: ${t.name}`))}getProvider(e){return this.providers.get(e)||null}getAllProviders(){return Array.from(this.providers.values())}findProviderByUrl(e){for(let t of this.providers.values())if(t.matchesUrl(e))return t;return null}findProviderByRequest(e){for(let t of this.providers.values())if(t.matchRequest(e))return t;return null}findProviderByResponse(e){for(let t of this.providers.values())if(t.matchResponse(e))return t;return null}getCapabilities(e){let t=this.getProvider(e);return t?t.capabilities:null}hasCapability(e,t){let s=this.getCapabilities(e);return s?s[t]:!1}getStats(){let e=this.getAllProviders(),t=e.map(s=>s.capabilities);return{totalProviders:e.length,providersWithStreaming:t.filter(s=>s.supportsStreaming).length,providersWithAuth:t.filter(s=>s.supportsAuth).length,providerIds:e.map(s=>s.id)}}};var y=class{constructor(e,t={}){this.messageBridge=e,this.activeStreams=new Map,this.parsers=new Map,this.logger=console,this.config={maxConcurrentStreams:5,streamTimeout:3e5,retryAttempts:3,retryDelay:1e3,enableMetrics:!0,...t},this.metrics={totalStreams:0,successfulStreams:0,failedStreams:0,avgProcessingTime:0,totalProcessingTime:0},this.registerDefaultParsers(),this.cleanupInterval=setInterval(()=>this.cleanupStaleStreams(),6e4)}registerParser(e,t){this.parsers.set(e,t)}registerDefaultParsers(){this.registerParser("delta-encoding-v1",M),this.registerParser("sse",D),this.registerParser("json-stream",I)}async processStream({streamId:e,response:t,format:s,metadata:r={},enableRetry:i=!0}){let o=Date.now();if(this.isAtCapacity()){let n=new Error("Streaming capacity exceeded");this.logger.warn(`[StreamingManager] ${n.message}`),this.handleError(e,n);return}try{let n=this.parsers.get(s);if(!n)throw new Error(`Unknown streaming format: ${s}`);let a=new n({streamId:e,metadata:r,onChunk:c=>this.handleChunk(e,c),onComplete:()=>this.handleComplete(e,o),onError:c=>this.handleError(e,c,o,i,{streamId:e,response:t,format:s,metadata:r})});this.activeStreams.set(e,{parser:a,metadata:r,startTime:o,chunks:[],format:s}),await a.process(t)}catch(n){this.logger.error(`[StreamingManager] Error processing stream ${e}:`,n),this.handleError(e,n,o,i,{streamId:e,response:t,format:s,metadata:r})}}handleChunk(e,t){let s=this.activeStreams.get(e);s&&(s.chunks.push(t),this.messageBridge&&this.messageBridge.send("chatChunk",{role:t.role||"assistant",content:this.reconstructContent(s.chunks),model:s.metadata.model,seq:s.chunks.length,streamId:e,cumulative:!0}))}handleComplete(e,t){let s=this.activeStreams.get(e);if(!s)return;let r=Date.now()-(t||s.startTime);this.updateMetrics(e,!0,r),this.messageBridge&&this.messageBridge.send("streamComplete",{streamId:e}),this.activeStreams.delete(e),this.logger.log(`[StreamingManager] Stream ${e} completed successfully (${r}ms)`)}async handleError(e,t,s,r=!0,i=null){let o=this.activeStreams.get(e);if(!o)return;let n=Date.now()-(s||o.startTime);if(this.logger.error(`[StreamingManager] Stream ${e} error:`,t),this.updateMetrics(e,!1,n),r&&this.isRecoverableError(t)&&i){this.activeStreams.delete(e),await this.retryStream(e,i);return}this.messageBridge&&this.messageBridge.send("streamComplete",{streamId:e,error:t.message}),this.activeStreams.delete(e)}isRecoverableError(e){return["NetworkError","TimeoutError","TypeError"].some(s=>e.name?.includes(s)||e.message?.includes(s))}reconstructContent(e){return e.map(t=>t.content||"").join("")}cancelStream(e){let t=this.activeStreams.get(e);t&&t.parser.cancel&&t.parser.cancel(),this.activeStreams.delete(e)}getActiveStreams(){return Array.from(this.activeStreams.keys())}cleanupStaleStreams(){let e=Date.now(),t=this.config.streamTimeout;for(let[s,r]of this.activeStreams)e-r.startTime>t&&(this.logger.warn(`[StreamingManager] Stream ${s} timed out, cleaning up`),this.handleError(s,new Error("Stream timeout")))}async retryStream(e,t,s=1){if(s>this.config.retryAttempts){this.logger.error(`[StreamingManager] Stream ${e} failed after ${s} attempts`),this.handleError(e,new Error("Max retry attempts exceeded"));return}this.logger.log(`[StreamingManager] Retrying stream ${e} (attempt ${s})`),await new Promise(r=>setTimeout(r,this.config.retryDelay*s));try{await this.processStream({...t,streamId:`${e}_retry_${s}`})}catch{await this.retryStream(e,t,s+1)}}updateMetrics(e,t,s){this.config.enableMetrics&&(this.metrics.totalStreams++,t?this.metrics.successfulStreams++:this.metrics.failedStreams++,this.metrics.totalProcessingTime+=s,this.metrics.avgProcessingTime=this.metrics.totalProcessingTime/this.metrics.totalStreams)}getMetrics(){return{...this.metrics}}isAtCapacity(){return this.activeStreams.size>=this.config.maxConcurrentStreams}destroy(){this.cleanupInterval&&clearInterval(this.cleanupInterval);for(let e of this.activeStreams.keys())this.cancelStream(e);this.activeStreams.clear(),this.parsers.clear()}},S=class{constructor({streamId:e,metadata:t,onChunk:s,onComplete:r,onError:i}){this.streamId=e,this.metadata=t,this.onChunk=s,this.onComplete=r,this.onError=i,this.isCancelled=!1}async process(e){throw new Error("process() must be implemented by subclass")}cancel(){this.isCancelled=!0}emitChunk(e){this.isCancelled||this.onChunk(e)}emitComplete(){this.isCancelled||this.onComplete()}emitError(e){this.isCancelled||this.onError(e)}},M=class extends S{async process(e){let s=e.clone().body.getReader(),r=new TextDecoder("utf-8"),i="",o=[],n={value:"unknown"},a={value:null},c=0,l="",m=0,h="message",u="";try{for(;!this.isCancelled;){let{done:v,value:P}=await s.read();if(v)break;i+=r.decode(P,{stream:!0});let T=i.split(`
-`);i=T.pop()||"";for(let B of T){let g=B.trim();if(g===""){if(u&&h==="delta")try{let E=JSON.parse(u),V=this.processDeltaPayload(E,o,n,a),b=this.reconstructContent(o);if(V&&b&&b!==l){let C=Date.now();C-m>=100&&(c++,this.emitChunk({content:b,role:a.value||"assistant",model:n.value,seq:c,timestamp:C}),l=b,m=C)}}catch(E){console.warn("[DeltaParser] Parse error:",E)}h="message",u=""}else g.startsWith("event: ")?h=g.slice(7).trim():g.startsWith("data: ")&&(u=u?u+`
-`+g.slice(6):g.slice(6))}}let p=this.reconstructContent(o);p&&p!==l&&(c++,this.emitChunk({content:p,role:a.value||"assistant",model:n.value,seq:c,timestamp:Date.now(),isFinal:!0})),this.emitComplete()}catch(p){this.emitError(p)}}processDeltaPayload(e,t,s,r){let i=!1,o=e.o,n=e.p,a=e.v;if(n==="/message/metadata"&&o==="add"&&a?.model_slug&&(s.value=a.model_slug),n==="/message/author/role"&&(r.value=a),o==="patch"&&Array.isArray(a))for(let c of a){let l=c.p,m=c.o,h=c.v;if(l==="/message/author/role"&&(r.value=h),l==="/message/metadata"&&m==="add"&&h?.model_slug&&(s.value=h.model_slug),l==="/message/content/parts"&&(m==="replace"||m==="add")){let u=t.length;t.splice(0,t.length,...Array.isArray(h)?h:[h]),(t.length!==u||t.some((p,v)=>p!==(Array.isArray(h)?h[v]:h)))&&(i=!0)}else if(l&&l.startsWith("/message/content/parts/")){let u=l.match(/\/message\/content\/parts\/(\d+)/);if(u){let p=parseInt(u[1],10),v=t[p];m==="append"?t[p]=(t[p]||"")+h:(m==="replace"||m==="add")&&(t[p]=h),t[p]!==v&&(i=!0)}}}else if(n==="/message/content/parts"&&(o==="replace"||o==="add")){let c=t.length;t.splice(0,t.length,...Array.isArray(a)?a:[a]),(t.length!==c||t.some((l,m)=>l!==(Array.isArray(a)?a[m]:a)))&&(i=!0)}else if(n&&n.startsWith("/message/content/parts/")){let c=n.match(/\/message\/content\/parts\/(\d+)/);if(c){let l=parseInt(c[1],10),m=t[l];o==="append"?t[l]=(t[l]||"")+a:(o==="replace"||o==="add")&&(t[l]=a),t[l]!==m&&(i=!0)}}return i}reconstructContent(e){return e.filter(t=>typeof t=="string").join(`
+var injectWeb = (function () {
+  "use strict";
 
-`)}},D=class extends S{async process(e){let s=e.clone().body.getReader(),r=new TextDecoder("utf-8"),i="",o="",n="message";try{for(;!this.isCancelled;){let{done:a,value:c}=await s.read();if(a)break;i+=r.decode(c,{stream:!0});let l=i.split(`
-`);i=l.pop()||"";for(let m of l){let h=m.trim();if(h===""){if(o&&n==="data")try{let u=JSON.parse(o);this.emitChunk({content:u.content||u.text||"",role:u.role||"assistant",model:this.metadata.model,seq:Date.now(),timestamp:Date.now()})}catch{this.emitChunk({content:o,role:"assistant",model:this.metadata.model,seq:Date.now(),timestamp:Date.now()})}n="message",o=""}else h.startsWith("event: ")?n=h.slice(7).trim():h.startsWith("data: ")&&(o=h.slice(6))}}this.emitComplete()}catch(a){this.emitError(a)}}},I=class extends S{async process(e){let s=e.clone().body.getReader(),r=new TextDecoder("utf-8"),i="";try{for(;!this.isCancelled;){let{done:o,value:n}=await s.read();if(o)break;i+=r.decode(n,{stream:!0});let a=this.extractJSONObject(i);for(let c of a)this.emitChunk({content:c.content||c.text||"",role:c.role||"assistant",model:this.metadata.model,seq:Date.now(),timestamp:Date.now()})}this.emitComplete()}catch(o){this.emitError(o)}}extractJSONObject(e){let t=[],s=0;for(;s<e.length;)try{let r=JSON.parse(e.slice(s));t.push(r);break}catch{let i=e.indexOf("{",s+1);if(i===-1)break;s=i}return t}};var x=class{constructor(){this.authorization=null,this.updatedAt=null,this.extraHeaders={}}setAuthData(e){e&&(this.authorization=e,this.updatedAt=Date.now())}setExtraHeaders(e){this.extraHeaders={...this.extraHeaders,...e},this.updatedAt=Date.now()}getLatest(){return{authorization:this.authorization,updatedAt:this.updatedAt,extraHeaders:Object.keys(this.extraHeaders).length>0?this.extraHeaders:void 0}}},A=class{constructor(e){this.authStore=e,this.logger=console}onRequest(e){console.log("[ChatGPT] onRequest called:",e.url,e.method);let t=e.headers.Authorization||e.headers.authorization;t&&this.authStore.setAuthData(t);let s={};for(let[r,i]of Object.entries(e.headers))r.toLowerCase().startsWith("chatgpt-")&&(s[r]=i);Object.keys(s).length>0&&this.authStore.setExtraHeaders(s),this.handleUserPrompt(e)}handleUserPrompt(e){if(e.url?.match(/\/backend-api(\/f)?\/conversation(\?|$)/)&&e.body)try{let s=typeof e.body=="string"?e.body:new TextDecoder().decode(e.body),r=JSON.parse(s);if(r.messages&&Array.isArray(r.messages)){let i=r.messages.filter(n=>n.author?.role==="user"),o=i[i.length-1];if(o&&o.content?.parts){let n=o.content.parts.filter(a=>typeof a=="string").join(`
-`);n&&window.__VIVIM_BRIDGE&&(this.logger.log("[ChatGPT] Sending userPrompt to bridge",{contentLength:n.length,conversationId:r.conversation_id}),window.__VIVIM_BRIDGE.send("userPrompt",{role:"user",content:n,conversationId:r.conversation_id||null}))}}}catch(s){this.logger.warn("[ChatGPT] Failed to parse request body:",s)}}async onResponse(e){if(e.url?.match(/\/backend-api(\/f)?\/conversation(\?|$)/)){this.logger.log("[ChatGPT] Intercepted streaming response"),this.streamingManager||(this.streamingManager=new y(window.__VIVIM_BRIDGE));let s="chatgpt_"+Date.now()+"_"+Math.floor(Math.random()*1e3);await this.streamingManager.processStream({streamId:s,response:e.response,format:"delta-encoding-v1",metadata:{provider:"chatgpt",model:"unknown"}})}}},R=class extends f{constructor(){super({id:"chatgpt",name:"ChatGPT",hosts:["chatgpt.com","chat.com"],capabilities:{supportsStreaming:!0,supportsAuth:!0,messageFormat:"openai"}}),this.authStore=new x,this.interceptor=new A(this.authStore)}matchRequest(e){return e.url?.includes("/backend-api/")}onRequest(e){return this.interceptor.onRequest(e)}matchResponse(e){return!!e.url?.match(/\/backend-api(\/f)?\/conversation(\?|$)/)}async onResponse(e){if(e.url?.match(/\/backend-api(\/f)?\/conversation(\?|$)/)){this.logger.log("[ChatGPT] Intercepted streaming response"),this.streamingManager||(this.streamingManager=new y(window.__VIVIM_BRIDGE));let s="chatgpt_"+Date.now()+"_"+Math.floor(Math.random()*1e3);await this.streamingManager.processStream({streamId:s,response:e.response,format:"delta-encoding-v1",metadata:{provider:"chatgpt",model:"unknown"}})}}registerAuthHandler(){window.__VIVIM_BRIDGE&&window.__VIVIM_BRIDGE_AUTH_HANDLERS&&(window.__VIVIM_BRIDGE.handle("getChatGPTAuthHeader",()=>this.authStore.getLatest()),window.__VIVIM_BRIDGE_AUTH_HANDLERS.set("chatgpt",this))}getAuthHeaders(){let e=this.authStore.getLatest();return{Authorization:e.authorization,...e.extraHeaders}}};var w=new _;w.register(new R);window.__VIVIM_PROVIDERS__=w;function H(){let d=window.fetch;window.fetch=async function(...e){let[t,s]=e,r=w.findProviderByRequest({url:typeof t=="string"?t:t?.url,method:s?.method||"GET",headers:s?.headers||{},body:s?.body});if(r)try{r.onRequest({url:typeof t=="string"?t:t?.url,method:s?.method||"GET",headers:s?.headers||{},body:s?.body,init:s})}catch(a){console.warn(`[Providers] Error in ${r.id} onRequest:`,a)}let i=await d.apply(this,e),o=i.clone(),n=w.findProviderByResponse({url:typeof t=="string"?t:t?.url,response:i,clone:()=>o});return n&&setTimeout(async()=>{try{await n.onResponse({url:typeof t=="string"?t:t?.url,response:i,clone:()=>o})}catch(a){console.warn(`[Providers] Error in ${n.id} onResponse:`,a)}},0),i},console.log("[Providers] Fetch interception setup complete")}function $(){let d=XMLHttpRequest.prototype.open,e=XMLHttpRequest.prototype.send;XMLHttpRequest.prototype.open=function(t,s,...r){return this._xhr_url=s,this._xhr_method=t,this._xhr_headers={},d.call(this,t,s,...r)},XMLHttpRequest.prototype.send=function(t){let s={protocol:"xhr",method:this._xhr_method,url:this._xhr_url,headers:{...this._xhr_headers},body:t},r=w.findProviderByRequest(s);if(r)try{r.onRequest(s)}catch(i){console.warn(`[Providers] Error in ${r.id} onRequest:`,i)}return e.call(this,t)},console.log("[Providers] XHR interception setup complete")}var q=class{constructor(e,t={}){this.communicationId=e,this.allowedIds=new Set(t.allowedIds||[]),this.handlers=new Map,this.pendingRequests=new Map,this.requestId=0,window.addEventListener("message",this.handleMessage.bind(this))}handle(e,t){this.handlers.set(e,t)}send(e,t){let s={type:"web-bridge",communicationId:this.communicationId,id:`req_${++this.requestId}`,action:e,data:t,timestamp:Date.now()};console.log("[Bridge] Sending:",e,t),window.postMessage(s,"*")}async invoke(e,t){return new Promise((s,r)=>{let i=`req_${++this.requestId}`,o={type:"web-bridge",communicationId:this.communicationId,id:i,action:e,data:t,needResponse:!0,timestamp:Date.now()};this.pendingRequests.set(i,{resolve:s,reject:r,timeout:setTimeout(()=>{this.pendingRequests.delete(i),r(new Error("Bridge request timeout"))},3e4)}),window.postMessage(o,"*")})}handleMessage(e){if(e.data.type!=="web-bridge"||e.data.communicationId!=="saveai-extension-content")return;let{action:t,data:s,requestId:r,success:i,error:o}=e.data;if(r&&this.pendingRequests.has(r)){let n=this.pendingRequests.get(r);clearTimeout(n.timeout),this.pendingRequests.delete(r),i?n.resolve(s):n.reject(new Error(o||"Bridge request failed"));return}if(t&&this.handlers.has(t))try{let a=this.handlers.get(t)(s);e.data.needResponse&&window.postMessage({type:"web-bridge",communicationId:"inject-chat-web",requestId:e.data.id,success:!0,data:a,timestamp:Date.now()},"*")}catch(n){e.data.needResponse&&window.postMessage({type:"web-bridge",communicationId:"inject-chat-web",requestId:e.data.id,success:!1,error:n.message,timestamp:Date.now()},"*")}}};function G(){let d=new q("inject-chat-web",{allowedIds:["saveai-extension-content"]});window.__VIVIM_BRIDGE=d,console.log("[Providers] Bridge created and ready"),window.__VIVIM_BRIDGE_AUTH_HANDLERS=new Map}document.readyState==="loading"?document.addEventListener("DOMContentLoaded",k):k();function k(){console.log("[Providers] Initializing provider system..."),H(),$(),G(),console.log("[Providers] All providers initialized")}window.VIVIM_PROVIDER_REGISTRY=w;})();
+  // ═══════════════════════════════════════════════════════
+  // Helpers
+  // ═══════════════════════════════════════════════════════
+
+  function y(o) {
+    return o == null || typeof o == "function" ? { main: o } : o;
+  }
+
+  const q = "web-bridge",
+    k = "__handshake__";
+
+  // ═══════════════════════════════════════════════════════
+  // Bridge (message bus — unchanged)
+  // ═══════════════════════════════════════════════════════
+
+  class A {
+    constructor(t, e = {}) {
+      this.messageHandlers = new Map();
+      this.pendingRequests = new Map();
+      this.isReady = !1;
+      this.handshakeAttempts = 0;
+      this.options = {
+        requestTimeout: 3e4,
+        handshakeTimeout: 500,
+        handshakeRetryInterval: 1e3,
+        maxHandshakeAttempts: 10,
+      };
+      this.handleMessage = (i) => {
+        const s = i.data;
+        !s ||
+          typeof s != "object" ||
+          s.type !== this.messageType ||
+          (this.isAllowedId(s.communicationId) &&
+            (s.action && this.handleRequestMessage(s),
+            s.requestId && this.handleResponseMessage(s)));
+      };
+      this.communicationId = t;
+      this.messageType = e.messageType || q;
+      this.allowedIds = new Set(e.allowedIds || []);
+      Object.assign(this.options, e);
+      this.setupMessageListener();
+      this.setupHandshakeHandler();
+    }
+    addAllowedId(t) { this.allowedIds.add(t); }
+    removeAllowedId(t) { this.allowedIds.delete(t); }
+    isAllowedId(t) { return this.allowedIds.size === 0 || this.allowedIds.has(t); }
+    generateId() { return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`; }
+    async ensureReady() {
+      if (!this.isReady) {
+        if (this.readyPromise) return this.readyPromise;
+        this.readyPromise = this.performHandshakeWithRetry();
+        try { await this.readyPromise; } finally { this.readyPromise = void 0; }
+      }
+    }
+    async performHandshakeWithRetry() {
+      return new Promise((t, e) => {
+        const i = async () => {
+          try {
+            await this.sendSingleHandshakeRequest();
+            this.isReady = !0;
+            this.stopHandshakeRetry();
+            t();
+          } catch (s) {
+            if (this.handshakeAttempts++, this.handshakeAttempts >= this.options.maxHandshakeAttempts) {
+              this.stopHandshakeRetry();
+              e(new Error(`建联失败: ${s}`));
+              return;
+            }
+            this.handshakeRetryInterval = setTimeout(i, this.options.handshakeRetryInterval);
+          }
+        };
+        i();
+      });
+    }
+    async sendSingleHandshakeRequest() {
+      return new Promise((t, e) => {
+        const i = this.generateId(),
+          s = setTimeout(() => { this.pendingRequests.delete(i); e(new Error("握手超时")); }, this.options.handshakeTimeout);
+        this.pendingRequests.set(i, { resolve: t, reject: e, timeout: s });
+        const n = { type: this.messageType, communicationId: this.communicationId, id: i, action: k, data: { timestamp: Date.now() }, needResponse: !0, timestamp: Date.now() };
+        globalThis.postMessage(n, "*");
+      });
+    }
+    stopHandshakeRetry() { this.handshakeRetryInterval && (clearTimeout(this.handshakeRetryInterval), this.handshakeRetryInterval = void 0); }
+    send(t, e) { const i = { type: this.messageType, communicationId: this.communicationId, id: this.generateId(), action: t, data: e, needResponse: !1, timestamp: Date.now() }; globalThis.postMessage(i, "*"); }
+    async invoke(t, e) { return await this.ensureReady(), this.invokeRequest(t, e); }
+    async invokeRequest(t, e) {
+      return new Promise((i, s) => {
+        const n = this.generateId(),
+          r = setTimeout(() => { this.pendingRequests.delete(n); s(new Error(`请求超时: ${t}`)); }, this.options.requestTimeout);
+        this.pendingRequests.set(n, { resolve: i, reject: s, timeout: r });
+        const a = { type: this.messageType, communicationId: this.communicationId, id: n, action: t, data: e, needResponse: !0, timestamp: Date.now() };
+        globalThis.postMessage(a, "*");
+      });
+    }
+    handle(t, e) { return this.messageHandlers.set(t, e), () => { this.messageHandlers.delete(t); }; }
+    getReady() { return this.isReady; }
+    destroy() { this.stopHandshakeRetry(); this.messageHandlers.clear(); this.clearPendingRequests(); globalThis.removeEventListener("message", this.handleMessage); }
+    setupMessageListener() { this.handleMessage = this.handleMessage.bind(this); globalThis.addEventListener("message", this.handleMessage); }
+    async handleRequestMessage(t) {
+      const { action: e, data: i, needResponse: s, id: n } = t;
+      try {
+        const r = this.messageHandlers.get(e);
+        if (!r) { s && this.sendResponse(n, !1, void 0, `未找到处理器: ${e}`); return; }
+        let a = r(i);
+        a && typeof a.then == "function" && (a = await a);
+        s && this.sendResponse(n, !0, a);
+      } catch (r) {
+        if (console.error(`处理消息错误 [${e}]:`, r), s) { const a = r instanceof Error ? r.message : String(r); this.sendResponse(n, !1, void 0, a); }
+      }
+    }
+    handleResponseMessage(t) {
+      const { requestId: e, success: i, data: s, error: n } = t,
+        r = this.pendingRequests.get(e);
+      r && (clearTimeout(r.timeout), this.pendingRequests.delete(e), i ? r.resolve(s) : r.reject(new Error(n || "未知错误")));
+    }
+    sendResponse(t, e, i, s) { const n = { type: this.messageType, communicationId: this.communicationId, id: this.generateId(), requestId: t, success: e, data: i, error: s, timestamp: Date.now() }; globalThis.postMessage(n, "*"); }
+    setupHandshakeHandler() { this.handle(k, (t) => ({ success: !0, timestamp: Date.now() })); }
+    clearPendingRequests() { this.pendingRequests.forEach(({ reject: t, timeout: e }) => { clearTimeout(e); t(new Error("连接已断开")); }); this.pendingRequests.clear(); }
+  }
+
+  function L(o, t = {}) { return new A(o, t); }
+
+  // ═══════════════════════════════════════════════════════
+  // Data stores (unchanged)
+  // ═══════════════════════════════════════════════════════
+
+  class f {
+    static reqId = null;
+    static updatedAt = null;
+    static extHeaders = {};
+    static setReqId(t) { t && (this.reqId = t, this.updatedAt = Date.now()); }
+    static getLatest() { return { reqId: this.reqId, updatedAt: this.updatedAt }; }
+    static setExtHeaders(t) { this.extHeaders = { ...this.extHeaders, ...t }; }
+    static getExtHeaders() { return this.extHeaders; }
+  }
+
+  class H {
+    static authorization = null;
+    static userIdentityType = null;
+    static updatedAt = null;
+    static setAuthData(t, e) { t && (this.authorization = t, e !== void 0 && (this.userIdentityType = e), this.updatedAt = Date.now()); }
+    static getLatest() { return { authorization: this.authorization, userIdentityType: this.userIdentityType, updatedAt: this.updatedAt }; }
+  }
+  window.CopilotAuthStore = H;
+
+  class g {
+    static authorization = null;
+    static updatedAt = null;
+    static extraHeaders = {};
+    static setAuthData(t) { t && (this.authorization = t, this.updatedAt = Date.now()); }
+    static setExtraHeaders(t) { this.extraHeaders = t, this.updatedAt = Date.now(); }
+    static getLatest() { return { authorization: this.authorization, updatedAt: this.updatedAt, extraHeaders: Object.keys(this.extraHeaders).length > 0 ? this.extraHeaders : void 0 }; }
+  }
+  window.ChatGPTAuthStore = g;
+
+  const X = ["chatgpt-", "oai-"];
+
+  class w {
+    static url = null;
+    static updatedAt = null;
+    static setUrl(t) { t && (this.url = t, this.updatedAt = Date.now()); }
+    static getLatest() { return { url: this.url, updatedAt: this.updatedAt }; }
+  }
+
+  class l {
+    static reqId = null;
+    static atToken = null;
+    static conversationUuid = null;
+    static updatedAt = null;
+    static setReqId(t) { t && (this.reqId = t, this.updatedAt = Date.now()); }
+    static setAtToken(t) { t && (this.atToken = t, this.updatedAt = Date.now()); }
+    static setConversationUuid(t) { t && (this.conversationUuid = t, this.updatedAt = Date.now()); }
+    static getLatest() { return { reqId: this.reqId, atToken: this.atToken, conversationUuid: this.conversationUuid, updatedAt: this.updatedAt }; }
+  }
+
+  class c {
+    static authorization = null;
+    static extraHeaders = {};
+    static listMessagesUrl = null;
+    static updatedAt = null;
+    static setAuthData(t) { t && (this.authorization = t, this.updatedAt = Date.now()); }
+    static setExtraHeaders(t) { this.extraHeaders = { ...this.extraHeaders, ...t }, this.updatedAt = Date.now(); }
+    static setListMessagesUrl(t) { t && (this.listMessagesUrl = t, this.updatedAt = Date.now()); }
+    static getLatest() { return { authorization: this.authorization, extraHeaders: this.extraHeaders, listMessagesUrl: this.listMessagesUrl, updatedAt: this.updatedAt }; }
+  }
+  window.KimiAuthStore = c;
+
+  // ═══════════════════════════════════════════════════════
+  // XMLHttpRequest interceptors (unchanged — they don't stack)
+  // ═══════════════════════════════════════════════════════
+
+  class I {
+    originalXHROpen = null;
+    originalXHRSend = null;
+    isHooked = !1;
+    targetUrl = "/_/BardChatUi/data/batchexecute";
+    start() { this.isHooked || (this.hookXHR(), this.isHooked = !0); }
+    stop() { this.isHooked && (this.unhookXHR(), this.isHooked = !1); }
+    isGeminiAPIRequest(t) { return t.includes(this.targetUrl); }
+    hasTargetRpcids(t) { try { return new URL(t, window.location.origin).searchParams.get("rpcids") === "hNvQHb"; } catch { return !1; } }
+    hookXHR() {
+      this.originalXHROpen = XMLHttpRequest.prototype.open;
+      this.originalXHRSend = XMLHttpRequest.prototype.send;
+      const t = this;
+      XMLHttpRequest.prototype.open = function (e, i, s, n, r) {
+        this._interceptor_url = i;
+        this._interceptor_headers = {};
+        const a = this.setRequestHeader.bind(this);
+        return this.setRequestHeader = function (h, u) { h.toLowerCase().startsWith("x-goog-ext-") && (this._interceptor_headers[h] = u); a(h, u); }, t.originalXHROpen.call(this, e, i, s !== !1, n || null, r || null);
+      };
+      XMLHttpRequest.prototype.send = function (e) {
+        const i = this._interceptor_url, s = this._interceptor_headers;
+        if (i && t.isGeminiAPIRequest(i)) { try { const r = new URL(i, window.location.origin).searchParams.get("_reqid"); r && f.setReqId(r); } catch {} i && t.hasTargetRpcids(i) && s && Object.keys(s).length > 0 && f.setExtHeaders(s); }
+        return t.originalXHRSend.call(this, e);
+      };
+    }
+    unhookXHR() { this.originalXHROpen && (XMLHttpRequest.prototype.open = this.originalXHROpen); this.originalXHRSend && (XMLHttpRequest.prototype.send = this.originalXHRSend); }
+  }
+
+  class x {
+    originalXHROpen = null;
+    originalXHRSend = null;
+    isHooked = !1;
+    targetUrl = "/_/LabsTailwindUi/data/batchexecute";
+    start() { this.isHooked || (this.hookXHR(), this.isHooked = !0); }
+    stop() { this.isHooked && (this.unhookXHR(), this.isHooked = !1); }
+    isNotebookLMAPIRequest(t) { return t.includes(this.targetUrl); }
+    hasTargetRpcids(t) { try { const i = new URL(t, window.location.origin).searchParams.get("rpcids"); return i === "VfAZjd" || i === "khqZz"; } catch { return !1; } }
+    hookXHR() {
+      this.originalXHROpen = XMLHttpRequest.prototype.open;
+      this.originalXHRSend = XMLHttpRequest.prototype.send;
+      const t = this;
+      XMLHttpRequest.prototype.open = function (e, i, s, n, r) { return this._interceptor_url = i, t.originalXHROpen.call(this, e, i, s !== !1, n || null, r || null); };
+      XMLHttpRequest.prototype.send = function (e) {
+        const i = this._interceptor_url;
+        if (i && t.isNotebookLMAPIRequest(i) && t.hasTargetRpcids(i)) {
+          try { const n = new URL(i, window.location.origin).searchParams.get("_reqid"); n && l.setReqId(n); } catch {}
+          if (typeof e == "string") { if (e.includes("at=")) try { const n = new URLSearchParams(e).get("at"); n && l.setAtToken(n); } catch {} } else if (e instanceof URLSearchParams) { const s = e.get("at"); s && l.setAtToken(s); } else if (e instanceof FormData) { const s = e.get("at"); s && typeof s == "string" && l.setAtToken(s); }
+          try { if (new URL(i, window.location.origin).searchParams.get("rpcids") === "khqZz") { let r = null; if (typeof e == "string" && e.includes("f.req=")) r = new URLSearchParams(e).get("f.req"); else if (e instanceof URLSearchParams) r = e.get("f.req"); else if (e instanceof FormData) { const a = e.get("f.req"); r = typeof a == "string" ? a : null; } if (r) { const h = JSON.parse(r)?.[0]?.[0]?.[1]; if (h) { const p = JSON.parse(h)?.[3]; p && typeof p == "string" && l.setConversationUuid(p); } } } } catch {}
+        }
+        return t.originalXHRSend.call(this, e);
+      };
+    }
+    unhookXHR() { this.originalXHROpen && (XMLHttpRequest.prototype.open = this.originalXHROpen); this.originalXHRSend && (XMLHttpRequest.prototype.send = this.originalXHRSend); }
+  }
+
+  class S {
+    originalXHROpen = null;
+    originalXHRSend = null;
+    isHooked = !1;
+    targetSuffix = "MakerSuiteService/ResolveDriveResource";
+    start() { this.isHooked || (this.hookXHR(), this.isHooked = !0); }
+    stop() { this.isHooked && (this.unhookXHR(), this.isHooked = !1); }
+    isTargetRequest(t) { const e = typeof t == "string" ? t : t.toString(); return e.endsWith(this.targetSuffix) || e.includes(this.targetSuffix + "?") || e.includes(this.targetSuffix + "$"); }
+    hookXHR() {
+      this.originalXHROpen = XMLHttpRequest.prototype.open;
+      this.originalXHRSend = XMLHttpRequest.prototype.send;
+      const t = this;
+      XMLHttpRequest.prototype.open = function (e, i, s, n, r) { return this._interceptor_url = i, t.originalXHROpen.call(this, e, i, s !== !1, n || null, r || null); };
+      XMLHttpRequest.prototype.send = function (e) { const i = this._interceptor_url; return i && t.isTargetRequest(i) && w.setUrl(i), t.originalXHRSend.call(this, e); };
+    }
+    unhookXHR() { this.originalXHROpen && (XMLHttpRequest.prototype.open = this.originalXHROpen); this.originalXHRSend && (XMLHttpRequest.prototype.send = this.originalXHRSend); }
+  }
+
+  // ═══════════════════════════════════════════════════════
+  // Header utilities (shared by plugins)
+  // ═══════════════════════════════════════════════════════
+
+  function extractHeaders(input, init) {
+    if (init?.headers) return normalizeHeaders(init.headers);
+    if (input instanceof Request) return normalizeHeaders(input.headers);
+    return {};
+  }
+
+  function normalizeHeaders(h) {
+    const out = {};
+    if (!h) return out;
+    if (h instanceof Headers) { h.forEach((v, k) => { out[k] = v; }); return out; }
+    if (Array.isArray(h)) { for (const [k, v] of h) out[k] = v; return out; }
+    if (h && typeof h === "object") { Object.assign(out, h); return out; }
+    return out;
+  }
+
+  function resolveUrl(input) {
+    try {
+      return typeof input === "string" ? input
+        : input instanceof URL ? input.href
+        : input?.url || "";
+    } catch { return ""; }
+  }
+
+  // ═══════════════════════════════════════════════════════
+  // Plugin interface (base class)
+  // ═══════════════════════════════════════════════════════
+
+  class Plugin {
+    get name() { return "BasePlugin"; }
+    matchRequest(ctx) { return false; }
+    onRequest(ctx) {}
+    matchResponse(ctx) { return false; }
+    onResponse(ctx) {}
+  }
+
+  // ═══════════════════════════════════════════════════════
+  // ChatGPT Plugin
+  // ═══════════════════════════════════════════════════════
+
+  class ChatGPTPlugin extends Plugin {
+    get name() { return "ChatGPT"; }
+    strictBypass = ["/backend-api/connectors/check", "/backend-api/rollback"];
+
+    matchRequest(ctx) {
+      return ctx.url?.includes("/backend-api/");
+    }
+
+    onRequest(ctx) {
+      if (this.strictBypass.some(p => ctx.url.includes(p))) return;
+
+      const auth = ctx.headers["Authorization"] || ctx.headers["authorization"];
+      if (auth) g.setAuthData(auth);
+
+      const extras = {};
+      for (const [k, v] of Object.entries(ctx.headers)) {
+        const lower = k.toLowerCase();
+        if (X.some(p => lower.startsWith(p))) extras[k] = v;
+      }
+      Object.keys(extras).length > 0 && g.setExtraHeaders(extras);
+    }
+
+    matchResponse(ctx) {
+      // Only intercept the streaming conversation endpoint (POST request)
+      if (this.strictBypass.some(p => ctx.url.includes(p))) return false;
+      
+      // Match both old and new ChatGPT streaming endpoints:
+      // - /backend-api/conversation (old)
+      // - /backend-api/f/conversation (new - "f" prefix)
+      const isStreamingEndpoint = ctx.url?.match(/\/backend-api(\/f)?\/conversation(\?|$)/);
+      
+      if (isStreamingEndpoint) {
+        console.log("[VIVIM inject] 🎯 matchResponse STREAMING:", ctx.url);
+      }
+      
+      return !!isStreamingEndpoint;
+    }
+
+    async onResponse(ctx) {
+      const clone = ctx.clone;
+      if (!clone || !clone.body) {
+        console.log("[VIVIM inject] ⚠️ No clone or body available, skipping");
+        return;
+      }
+
+      try {
+        if (!ctx.response.ok) {
+          console.log("[VIVIM inject] ⚠️ Response not OK:", ctx.response.status);
+          return;
+        }
+
+        console.log("[VIVIM inject] 🎯 Intercepted conversation response (delta encoding):", ctx.url);
+
+        const reader = clone.body.getReader();
+        const decoder = new TextDecoder("utf-8");
+        let buffer = "";
+        let eventCount = 0;
+        let appendCount = 0;
+
+        // Delta encoding state
+        let reconstructedText = "";
+        let currentModel = "unknown";
+        let currentRole = null;
+        let streamEnded = false;
+
+        // SSE event parsing state
+        let currentEvent = "message"; // default
+        let eventData = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || ""; // keep incomplete line
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+
+            if (trimmed === "") {
+              // Blank line = end of SSE event, process accumulated data
+              if (eventData) {
+                eventCount++;
+
+                if (currentEvent === "delta_encoding") {
+                  // Just the version: data: "v1"
+                  console.log("[VIVIM inject] 🔧 Delta encoding version:", eventData);
+                } else if (currentEvent === "delta") {
+                  try {
+                    const payload = JSON.parse(eventData);
+                    const op = payload.o;
+                    const path = payload.p;
+                    const value = payload.v;
+
+                    // Log first few events for debugging
+                    if (eventCount <= 5) {
+                      console.log(`[VIVIM inject] 📦 Delta #${eventCount}:`, { op, path, valueType: typeof value });
+                    }
+
+                    // Track model from metadata
+                    if (path === "/message/metadata" && op === "add" && value?.model_slug) {
+                      currentModel = value.model_slug;
+                    }
+                    if (path === "/message/author/role") {
+                      currentRole = value;
+                    }
+
+                    // Handle batched patch operations
+                    if (op === "patch" && Array.isArray(value)) {
+                      for (const subOp of value) {
+                        const subPath = subOp.p;
+                        const subOpType = subOp.o;
+                        const subValue = subOp.v;
+
+                        // Track role
+                        if (subPath === "/message/author/role") {
+                          currentRole = subValue;
+                        }
+
+                        // Track model
+                        if (subPath === "/message/metadata" && subOpType === "add" && subValue?.model_slug) {
+                          currentModel = subValue.model_slug;
+                        }
+
+                        // Append text content
+                        if (subPath === "/message/content/parts/0" && subOpType === "append") {
+                          reconstructedText += subValue;
+                          appendCount++;
+
+                          // Send chunk to bridge
+                          if (appendCount % 3 === 0 && window.__VIVIM_BRIDGE && reconstructedText) {
+                            window.__VIVIM_BRIDGE.send("chatChunk", {
+                              role: currentRole || "assistant",
+                              content: reconstructedText,
+                              model: currentModel,
+                              url: ctx.url
+                            });
+                          }
+                        }
+                      }
+                    } else if (op === "append" && path === "/message/content/parts/0") {
+                      // Single append operation
+                      reconstructedText += value;
+                      appendCount++;
+
+                      // Send chunk every few appends
+                      if (appendCount % 3 === 0 && window.__VIVIM_BRIDGE && reconstructedText) {
+                        window.__VIVIM_BRIDGE.send("chatChunk", {
+                          role: currentRole || "assistant",
+                          content: reconstructedText,
+                          model: currentModel,
+                          url: ctx.url
+                        });
+                      }
+                    }
+
+                    // Check for stream end
+                    if (path === "/message/status" && (op === "replace" || value === "finished_successfully")) {
+                      streamEnded = true;
+                    }
+                  } catch (e) {
+                    // Ignore parse errors
+                  }
+                }
+              }
+
+              // Reset for next event
+              currentEvent = "message";
+              eventData = "";
+            } else if (trimmed.startsWith("event: ")) {
+              currentEvent = trimmed.slice(7).trim();
+            } else if (trimmed.startsWith("data: ")) {
+              // Fix #6: SSE spec — multiple data: lines must be joined with \n
+              eventData = eventData ? eventData + "\n" + trimmed.slice(6) : trimmed.slice(6);
+            }
+          }
+        }
+
+        // Fix #7: Process remaining buffer after stream ends
+        if (buffer.trim()) {
+          const remainingLines = buffer.split('\n');
+          for (const line of remainingLines) {
+            const trimmed = line.trim();
+            if (trimmed === "") {
+              if (eventData && currentEvent === "delta") {
+                eventCount++;
+                try {
+                  processDeltaPayload(JSON.parse(eventData));
+                } catch (e) {}
+              }
+              currentEvent = "message";
+              eventData = "";
+            } else if (trimmed.startsWith("event: ")) {
+              currentEvent = trimmed.slice(7).trim();
+            } else if (trimmed.startsWith("data: ")) {
+              eventData = eventData ? eventData + "\n" + trimmed.slice(6) : trimmed.slice(6);
+            }
+          }
+        }
+
+        function processDeltaPayload(payload) {
+          const op = payload.o;
+          const path = payload.p;
+          const value = payload.v;
+
+          // Track model from metadata
+          if (path === "/message/metadata" && op === "add" && value?.model_slug) {
+            currentModel = value.model_slug;
+          }
+          if (path === "/message/author/role") {
+            currentRole = value;
+          }
+
+          // Handle batched patch operations
+          if (op === "patch" && Array.isArray(value)) {
+            for (const subOp of value) {
+              const subPath = subOp.p;
+              const subOpType = subOp.o;
+              const subValue = subOp.v;
+
+              if (subPath === "/message/author/role") {
+                currentRole = subValue;
+              }
+              if (subPath === "/message/metadata" && subOpType === "add" && subValue?.model_slug) {
+                currentModel = subValue.model_slug;
+              }
+              if (subPath === "/message/content/parts/0" && subOpType === "append") {
+                reconstructedText += subValue;
+                appendCount++;
+              }
+              // Fix #10: break early on stream end
+              if (subPath === "/message/status" && subOpType === "replace" && subValue === "finished_successfully") {
+                streamEnded = true;
+              }
+            }
+          } else if (op === "append" && path === "/message/content/parts/0") {
+            reconstructedText += value;
+            appendCount++;
+          }
+          if (path === "/message/status" && op === "replace" && value === "finished_successfully") {
+            streamEnded = true;
+          }
+        }
+
+        // Send final reconstructed message
+        if (reconstructedText && window.__VIVIM_BRIDGE) {
+          console.log(`[VIVIM inject] 📤 Sending final message: ${reconstructedText.length} chars, ${appendCount} appends`);
+          window.__VIVIM_BRIDGE.send("chatChunk", {
+            role: currentRole || "assistant",
+            content: reconstructedText,
+            model: currentModel,
+            url: ctx.url
+          });
+        }
+
+        // Signal stream complete
+        console.log(`[VIVIM inject] ✅ Stream finished — ${eventCount} events, ${appendCount} text appends, ${reconstructedText.length} chars`);
+        if (window.__VIVIM_BRIDGE) {
+          window.__VIVIM_BRIDGE.send("streamComplete", { timestamp: Date.now() });
+        }
+      } catch (e) {
+        console.warn("[VIVIM inject] Stream read error:", e);
+        // Still try to send complete so sidepanel exits streaming state
+        if (window.__VIVIM_BRIDGE) {
+          window.__VIVIM_BRIDGE.send("streamComplete", { timestamp: Date.now() });
+        }
+      }
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════
+  // Copilot Plugin
+  // ═══════════════════════════════════════════════════════
+
+  class CopilotPlugin extends Plugin {
+    get name() { return "Copilot"; }
+
+    matchRequest(ctx) {
+      return ctx.url?.includes("copilot.microsoft.com");
+    }
+
+    onRequest(ctx) {
+      const auth = ctx.headers["Authorization"] || ctx.headers["authorization"];
+      const identity = ctx.headers["X-Useridentitytype"] || ctx.headers["x-useridentitytype"];
+      if (auth) H.setAuthData(auth, identity);
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════
+  // Kimi Plugin
+  // ═══════════════════════════════════════════════════════
+
+  class KimiPlugin extends Plugin {
+    get name() { return "Kimi"; }
+    extraHeaderKeys = ["x-language", "x-msh-device-id", "x-msh-platform", "x-msh-session-id", "x-msh-version", "x-traffic-id", "r-timezone"];
+
+    matchRequest(ctx) {
+      return ctx.url?.includes("/apiv2/kimi.gateway.chat")
+        && ctx.url?.endsWith("/ListMessages");
+    }
+
+    onRequest(ctx) {
+      c.setListMessagesUrl(ctx.url);
+
+      const auth = ctx.headers["authorization"] || ctx.headers["Authorization"];
+      if (auth) c.setAuthData(auth);
+
+      const extras = {};
+      for (const [k, v] of Object.entries(ctx.headers)) {
+        if (this.extraHeaderKeys.includes(k.toLowerCase())) extras[k] = v;
+      }
+      Object.keys(extras).length > 0 && c.setExtraHeaders(extras);
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════
+  // SINGLE global fetch interceptor — dual-phase
+  // ═══════════════════════════════════════════════════════
+
+  class FetchInterceptor {
+    constructor() {
+      this.plugins = [];
+      this.isHooked = !1;
+      this.originalFetch = null;
+    }
+
+    register(plugin) { this.plugins.push(plugin); }
+
+    runRequestPlugins(ctx) {
+      for (const plugin of this.plugins) {
+        if (plugin.matchRequest?.(ctx)) {
+          try { plugin.onRequest?.(ctx); } catch (e) { /* silent per plugin */ }
+        }
+      }
+    }
+
+    runResponsePlugins(ctx) {
+      // Run all response plugins in parallel — fire-and-forget
+      const promises = [];
+      for (const plugin of this.plugins) {
+        if (plugin.matchResponse?.(ctx)) {
+          promises.push(
+            Promise.resolve().then(() => plugin.onResponse?.(ctx))
+              .catch(() => {})
+          );
+        }
+      }
+      return Promise.all(promises);
+    }
+
+    start() {
+      if (this.isHooked) return;
+      this.isHooked = !0;
+      this.originalFetch = window.fetch;
+      const self = this;
+
+      window.fetch = async function (input, init) {
+        const url = resolveUrl(input);
+
+        // ── REQUEST PHASE (sync) ──
+
+        const requestCtx = {
+          phase: "request",
+          url,
+          input,
+          init,
+          headers: extractHeaders(input, init),
+          timestamp: Date.now()
+        };
+
+        self.runRequestPlugins(requestCtx);
+
+        // ── ORIGINAL FETCH ──
+
+        let response;
+        try {
+          response = await self.originalFetch.call(this, input, init);
+        } catch (err) {
+          throw err; // never swallow network errors
+        }
+
+        // ── RESPONSE PHASE (async, on clone) ──
+
+        const clone = safeCloneResponse(response);
+
+        const responseCtx = {
+          phase: "response",
+          url,
+          request: requestCtx,
+          response,
+          clone,
+          timestamp: Date.now()
+        };
+
+        // Fire-and-forget — does NOT block returning response
+        self.runResponsePlugins(responseCtx).catch(() => {});
+
+        return response; // original, untouched
+      };
+    }
+
+    stop() {
+      this.originalFetch && (window.fetch = this.originalFetch, this.isHooked = !1, this.originalFetch = null);
+    }
+  }
+
+  function safeCloneResponse(response) {
+    try { return response.clone(); } catch { return null; }
+  }
+
+  // ═══════════════════════════════════════════════════════
+  // Main bootstrap
+  // ═══════════════════════════════════════════════════════
+
+  const b = y(() => {
+    const o = L("inject-chat-web", { allowedIds: ["saveai-extension-content"] });
+    window.__VIVIM_BRIDGE = o;
+    o.handle("getGeminiGlobalData", () => window.WIZ_global_data);
+    o.handle("getGoogleAiKeys", () => window.AF_initDataKeys);
+    o.handle("getCopilotAuthHeader", () => H.getLatest());
+    o.handle("getChatGPTAuthHeader", () => g.getLatest());
+    o.handle("getGeminiLatestReqId", () => f.getLatest());
+    o.handle("getGeminiExtHeaders", () => f.getExtHeaders());
+    o.handle("getGoogleAiResolveUrl", () => w.getLatest());
+    o.handle("getNotebookLMLatestReqId", () => l.getLatest());
+    o.handle("getKimiAuthHeader", () => c.getLatest());
+
+    // ── Single fetch interceptor with plugin pipeline ──
+
+    const fetchInterceptor = new FetchInterceptor();
+    fetchInterceptor.register(new ChatGPTPlugin());
+    fetchInterceptor.register(new CopilotPlugin());
+    fetchInterceptor.register(new KimiPlugin());
+    fetchInterceptor.start();
+
+    // XHR interceptors (these don't stack — prototype-patch once)
+    const t = () => { const d = new I; d.start(); window.addEventListener("beforeunload", () => { d.stop(); }); };
+    const s = () => { const d = new S; d.start(); window.addEventListener("beforeunload", () => { d.stop(); }); };
+    const n = () => { const d = new x; d.start(); window.addEventListener("beforeunload", () => { d.stop(); }); };
+
+    const a = document.URL.includes("https://gemini.google.com");
+    const u = document.URL.includes("https://chatgpt.com");
+    const P = document.URL.includes("https://notebooklm.google.com");
+
+    a && t();
+    u && s();
+    P && n();
+  });
+
+  function D() {}
+  function R(o, ...t) {}
+  const v = {
+    debug: (...o) => R(console.debug, ...o),
+    log: (...o) => R(console.log, ...o),
+    warn: (...o) => R(console.warn, ...o),
+    error: (...o) => R(console.error, ...o),
+  };
+
+  return (async () => {
+    try { return await b.main(); } catch (o) { throw v.error('The unlisted script "inject-web" crashed on startup!', o), o; }
+  })();
+})();
+injectWeb;

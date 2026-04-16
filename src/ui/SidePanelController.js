@@ -16,17 +16,38 @@ export class SidePanelController {
   }
 
   init() {
-    // Get DOM references
     this.messagesArea = document.getElementById('messagesArea');
     this.emptyState = document.getElementById('emptyState');
     this.promptInput = document.getElementById('promptInput');
     this.sendBtn = document.getElementById('sendBtn');
+    this.statusDot = document.getElementById('statusDot');
+    this.statusText = document.getElementById('statusText');
 
-    // Bind events
     this.bindEvents();
-
-    // Initialize with current tab
     this.initializeWithCurrentTab();
+    this.updateConnectionStatus('connecting');
+  }
+
+  updateConnectionStatus(status) {
+    if (!this.statusDot || !this.statusText) return;
+    
+    this.statusDot.className = 'status-dot';
+    
+    switch (status) {
+      case 'connected':
+        this.statusDot.classList.add('status-dot--connected');
+        this.statusText.textContent = 'Connected';
+        break;
+      case 'streaming':
+        this.statusDot.classList.add('status-dot--streaming');
+        this.statusText.textContent = 'Streaming...';
+        break;
+      case 'error':
+        this.statusText.textContent = 'Error';
+        break;
+      default:
+        this.statusText.textContent = 'Connecting...';
+    }
   }
 
   bindEvents() {
@@ -52,12 +73,27 @@ export class SidePanelController {
       this.currentTabId = tabs[0].id;
       this.loadConversation();
     }
+    
+    // Ping background to check connection
+    this.checkBackgroundConnection();
+  }
+  
+  async checkBackgroundConnection() {
+    try {
+      const response = await chrome.runtime.sendMessage({ type: 'PING' });
+      console.log('[SidePanel] Background ping response:', response);
+      if (response && response.status === 'ok') {
+        this.updateConnectionStatus('connected');
+      }
+    } catch (err) {
+      console.error('[SidePanel] Background ping failed:', err);
+      this.updateConnectionStatus('error');
+    }
   }
 
   handleMessage(message, sender, sendResponse) {
     console.log('[SidePanel] Received message:', message.type, message);
 
-    // Only process messages for current tab
     if (message.tabId && message.tabId !== this.currentTabId) {
       console.log('[SidePanel] Ignoring message for different tab:', message.tabId, 'current:', this.currentTabId);
       return;
@@ -65,14 +101,17 @@ export class SidePanelController {
 
     switch (message.type) {
       case MessageTypes.MESSAGE_ADDED:
+        this.updateConnectionStatus('connected');
         this.addMessage(message.role, message.content, message.model, message.timestamp);
         break;
 
       case MessageTypes.STREAM_UPDATE:
+        this.updateConnectionStatus('streaming');
         this.updateStreamingMessage(message.content, message.model, message.seq, message.isFinal);
         break;
 
       case MessageTypes.STREAM_COMPLETE:
+        this.updateConnectionStatus('connected');
         this.finalizeStreamingMessage();
         break;
 
@@ -81,9 +120,23 @@ export class SidePanelController {
         break;
 
       case MessageTypes.CONVERSATION_LOADED:
+        this.updateConnectionStatus('connected');
         this.loadMessages(message.messages);
         break;
+
+      case MessageTypes.TAB_DETECTED:
+        console.log('[SidePanel] Tab detected:', message.tabId, message.url);
+        if (this.currentTabId === message.tabId) {
+          this.loadConversation();
+        }
+        break;
     }
+  }
+
+  async switchTab(tabId) {
+    console.log('[SidePanel] Switching to tab:', tabId);
+    this.currentTabId = tabId;
+    this.loadConversation();
   }
 
   async sendPrompt() {
@@ -148,20 +201,29 @@ export class SidePanelController {
     if (!this.streamingMessage) {
       this.streamingMessage = document.createElement('div');
       this.streamingMessage.className = 'msg msg--assistant msg--streaming';
+      const contentEl = document.createElement('div');
+      contentEl.className = 'msg__content';
+      this.streamingMessage.appendChild(contentEl);
       this.messagesArea?.appendChild(this.streamingMessage);
       this.emptyState?.classList.add('hidden');
     }
 
-    this.streamingMessage.textContent = content;
-    this.messagesArea?.scrollTo(0, this.messagesArea.scrollHeight);
+    const contentEl = this.streamingMessage.querySelector('.msg__content');
+    if (contentEl) {
+      contentEl.innerHTML = this.formatMessage(content);
+    }
+    
+    this.messagesArea?.scrollTo({
+      top: this.messagesArea.scrollHeight,
+      behavior: 'auto'
+    });
 
-    // If this is the final chunk, finalize immediately
     if (isFinal) {
-      this.finalizeStreamingMessage();
+      this.finalizeStreamingMessage(model);
     }
   }
 
-  finalizeStreamingMessage() {
+  finalizeStreamingMessage(model) {
     if (this.streamingMessage) {
       // Convert streaming message to regular message by removing streaming class
       this.streamingMessage.classList.remove('msg--streaming');
@@ -170,9 +232,7 @@ export class SidePanelController {
       if (!this.streamingMessage.querySelector('.msg__meta')) {
         const metaEl = document.createElement('div');
         metaEl.className = 'msg__meta';
-        const timeSpan = document.createElement('span');
-        timeSpan.textContent = this.formatTime(Date.now());
-        metaEl.appendChild(timeSpan);
+        metaEl.innerHTML = `<span>${model || 'AI'}</span> • <span>${this.formatTime(Date.now())}</span>`;
         this.streamingMessage.appendChild(metaEl);
       }
 
@@ -201,12 +261,23 @@ export class SidePanelController {
       this.emptyState?.classList.remove('hidden');
     } else {
       this.emptyState?.classList.add('hidden');
+      const fragment = document.createDocumentFragment();
+      
       this.messageList.forEach(msg => {
         const msgEl = document.createElement('div');
         msgEl.className = `msg msg--${msg.role}`;
-        msgEl.innerHTML = `<div class="msg__content">${this.escapeHtml(msg.content)}</div>`;
-        this.messagesArea.appendChild(msgEl);
+        msgEl.innerHTML = `
+          <div class="msg__content">${this.formatMessage(msg.content)}</div>
+          <div class="msg__meta">
+            <span>${msg.model || (msg.role === 'user' ? 'You' : 'AI')}</span> • 
+            <span>${this.formatTime(msg.timestamp)}</span>
+          </div>
+        `;
+        fragment.appendChild(msgEl);
       });
+      
+      this.messagesArea.appendChild(fragment);
+      this.messagesArea.scrollTo(0, this.messagesArea.scrollHeight);
     }
   }
 
@@ -221,6 +292,19 @@ export class SidePanelController {
         this.loadMessages(response.messages);
       }
     });
+  }
+
+  formatMessage(text) {
+    if (!text) return '';
+    // Basic markdown-ish formatting
+    return text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/\n/g, '<br>')
+      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+      .replace(/\*(.*?)\*/g, '<em>$1</em>')
+      .replace(/`(.*?)`/g, '<code>$1</code>');
   }
 
   onInputChange() {

@@ -1,3 +1,4 @@
+import { Logger } from '../../core/logging/Logger.js';
 import { MessageTypes } from '../../core/messaging/MessageTypes.js';
 
 /**
@@ -8,13 +9,13 @@ export class TabManager {
     this.messageBus = messageBus;
     this.chatgptTabs = new Map();
     this.activeTabId = null;
-    this.logger = console;
+    this.logger = new Logger('TabManager');
 
     this.bindEvents();
+    this.scanExistingTabs();
   }
 
   bindEvents() {
-    // Listen for tab updates
     chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
       this.handleTabUpdate(tabId, changeInfo, tab);
     });
@@ -29,33 +30,73 @@ export class TabManager {
   }
 
   /**
+   * Scan all open tabs to find ChatGPT sessions on startup
+   */
+  async scanExistingTabs() {
+    try {
+      const tabs = await chrome.tabs.query({});
+      for (const tab of tabs) {
+        if (this.isChatGPT(tab.url)) {
+          this.registerTab(tab.id, tab.url, tab.title);
+        }
+      }
+      this.logger.info(`Startup scan complete. Found ${this.chatgptTabs.size} ChatGPT tabs.`);
+    } catch (error) {
+      this.logger.error('Failed to scan existing tabs:', error);
+    }
+  }
+
+  /**
    * Check if URL belongs to ChatGPT
-   * @param {string} url - Tab URL
-   * @returns {boolean} Whether URL is ChatGPT
    */
   isChatGPT(url) {
-    return /^https:\/\/(chatgpt\.com|chat\.com)\//.test(url || "");
+    if (!url) return false;
+    try {
+      const parsed = new URL(url);
+      return parsed.hostname === 'chatgpt.com' || parsed.hostname === 'chat.com';
+    } catch {
+      return false;
+    }
   }
 
   /**
    * Handle tab update events
    */
   handleTabUpdate(tabId, changeInfo, tab) {
-    if (this.isChatGPT(changeInfo.url)) {
-      const tabInfo = {
-        url: changeInfo.url,
-        title: tab.title || "ChatGPT",
-        detectedAt: Date.now()
-      };
+    // Only process when URL changes or loading completes
+    if (!changeInfo.url && changeInfo.status !== 'complete') return;
 
-      this.chatgptTabs.set(tabId, tabInfo);
+    const url = changeInfo.url || tab.url;
+    
+    if (this.isChatGPT(url)) {
+      this.registerTab(tabId, url, tab.title);
+    } else if (this.chatgptTabs.has(tabId)) {
+      // Tab navigated away from ChatGPT
+      this.logger.info(`Tab ${tabId} navigated away from ChatGPT`);
+      this.chatgptTabs.delete(tabId);
+    }
+  }
 
-      // Notify side panel
+  /**
+   * Register or update a ChatGPT tab
+   */
+  registerTab(tabId, url, title) {
+    const isNew = !this.chatgptTabs.has(tabId);
+    const tabInfo = {
+      url,
+      title: title || "ChatGPT",
+      detectedAt: Date.now()
+    };
+
+    this.chatgptTabs.set(tabId, tabInfo);
+
+    if (isNew) {
+      this.logger.info(`Detected new ChatGPT tab: ${tabId} (${url})`);
       this.messageBus.emit({
         type: MessageTypes.TAB_DETECTED,
         tabId,
         platform: "chatgpt",
-        url: changeInfo.url
+        url
       });
     }
   }
@@ -64,7 +105,10 @@ export class TabManager {
    * Handle tab removal
    */
   handleTabRemoved(tabId) {
-    this.chatgptTabs.delete(tabId);
+    if (this.chatgptTabs.has(tabId)) {
+      this.logger.info(`ChatGPT tab removed: ${tabId}`);
+      this.chatgptTabs.delete(tabId);
+    }
     if (this.activeTabId === tabId) {
       this.activeTabId = null;
     }
@@ -75,20 +119,15 @@ export class TabManager {
    */
   async handleTabActivated(activeInfo) {
     this.activeTabId = activeInfo.tabId;
-
+    
+    // If the newly activated tab is ChatGPT but we didn't know yet, register it
     try {
       const tab = await chrome.tabs.get(activeInfo.tabId);
-      if (tab && this.isChatGPT(tab.url)) {
-        if (!this.chatgptTabs.has(tab.id)) {
-          this.chatgptTabs.set(tab.id, {
-            url: tab.url,
-            title: tab.title || "ChatGPT",
-            detectedAt: Date.now()
-          });
-        }
+      if (tab && this.isChatGPT(tab.url) && !this.chatgptTabs.has(tab.id)) {
+        this.registerTab(tab.id, tab.url, tab.title);
       }
     } catch (error) {
-      this.logger.warn('[TabManager] Failed to get tab info:', error);
+      this.logger.debug('Failed to get info for activated tab (might be closed):', error.message);
     }
   }
 
