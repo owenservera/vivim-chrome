@@ -11,6 +11,8 @@ export class StreamingManager {
     this.activeStreams = new Map();
     this.streamStateHistory = new Map();
     this.parsers = new Map();
+    this.connectionPool = new Map(); // Connection pool by host
+    this.streamMultiplexQueue = new Map(); // Queued streams by provider
     this.logger = new Logger('StreamingManager');
 
     this.config = {
@@ -21,6 +23,11 @@ export class StreamingManager {
       enableMetrics: true,
       enableStateTracking: true,
       stateHistoryLimit: 50,
+      enableConnectionPooling: true,
+      maxConnectionsPerHost: 3,
+      connectionPoolTimeout: 60000,
+      enableStreamMultiplexing: true,
+      multiplexingBatchSize: 10,
       ...config
     };
 
@@ -29,11 +36,222 @@ export class StreamingManager {
       successfulStreams: 0,
       failedStreams: 0,
       avgProcessingTime: 0,
-      totalProcessingTime: 0
+      totalProcessingTime: 0,
+      peakConcurrentStreams: 0,
+      connectionPoolHits: 0,
+      connectionPoolMisses: 0,
+      multiplexedBatches: 0,
+      avgChunkProcessingTime: 0,
+      totalChunksProcessed: 0,
+      memoryUsage: 0,
+      performanceByProvider: new Map()
     };
 
     this.registerDefaultParsers();
     this.cleanupInterval = setInterval(() => this.cleanupStaleStreams(), 60000);
+  }
+
+  /**
+   * Get or create a connection from the pool
+   * @param {string} host - Host identifier
+   * @returns {object} Connection object
+   */
+  getConnection(host) {
+    if (!this.config.enableConnectionPooling) {
+      return this.createNewConnection(host);
+    }
+
+    const pool = this.connectionPool.get(host) || [];
+    const now = Date.now();
+
+    // Find available connection
+    const availableConnection = pool.find(conn =>
+      !conn.inUse && (now - conn.lastUsed) < this.config.connectionPoolTimeout
+    );
+
+    if (availableConnection) {
+      availableConnection.inUse = true;
+      availableConnection.lastUsed = now;
+      this.metrics.connectionPoolHits++;
+      return availableConnection;
+    }
+
+    // Create new connection if pool not full
+    if (pool.length < this.config.maxConnectionsPerHost) {
+      const connection = this.createNewConnection(host);
+      pool.push(connection);
+      this.connectionPool.set(host, pool);
+      this.metrics.connectionPoolMisses++;
+      return connection;
+    }
+
+    // Reuse oldest connection
+    const oldestConnection = pool.reduce((oldest, conn) =>
+      conn.lastUsed < oldest.lastUsed ? conn : oldest
+    );
+    oldestConnection.inUse = true;
+    oldestConnection.lastUsed = now;
+    this.metrics.connectionPoolHits++;
+    return oldestConnection;
+  }
+
+  /**
+   * Create a new connection
+   * @param {string} host - Host identifier
+   * @returns {object} Connection object
+   */
+  createNewConnection(host) {
+    return {
+      host,
+      inUse: true,
+      lastUsed: Date.now(),
+      streams: [],
+      created: Date.now()
+    };
+  }
+
+  /**
+   * Release a connection back to the pool
+   * @param {object} connection - Connection to release
+   */
+  releaseConnection(connection) {
+    connection.inUse = false;
+    connection.lastUsed = Date.now();
+
+    // Clean up expired connections
+    this.cleanupExpiredConnections(connection.host);
+  }
+
+  /**
+   * Clean up expired connections for a host
+   * @param {string} host - Host identifier
+   */
+  cleanupExpiredConnections(host) {
+    const pool = this.connectionPool.get(host);
+    if (!pool) return;
+
+    const now = Date.now();
+    const activePool = pool.filter(conn =>
+      (now - conn.lastUsed) < this.config.connectionPoolTimeout
+    );
+
+    if (activePool.length !== pool.length) {
+      this.connectionPool.set(host, activePool);
+      this.logger.debug(`Cleaned up ${pool.length - activePool.length} expired connections for ${host}`);
+    }
+  }
+
+  /**
+   * Queue stream for multiplexing
+   * @param {object} streamOptions - Stream options
+   */
+  queueForMultiplexing(streamOptions) {
+    if (!this.config.enableStreamMultiplexing) {
+      this.processStreamImmediately(streamOptions);
+      return;
+    }
+
+    const { metadata } = streamOptions;
+    const provider = metadata?.provider || 'unknown';
+    const queue = this.streamMultiplexQueue.get(provider) || [];
+
+    queue.push(streamOptions);
+    this.streamMultiplexQueue.set(provider, queue);
+
+    // Process batch if queue is full
+    if (queue.length >= this.config.multiplexingBatchSize) {
+      this.processMultiplexedBatch(provider);
+    } else {
+      // Process with delay to allow batching
+      setTimeout(() => {
+        const currentQueue = this.streamMultiplexQueue.get(provider);
+        if (currentQueue && currentQueue.length > 0) {
+          this.processMultiplexedBatch(provider);
+        }
+      }, 100);
+    }
+  }
+
+  /**
+   * Process a batch of multiplexed streams
+   * @param {string} provider - Provider identifier
+   */
+  async processMultiplexedBatch(provider) {
+    const queue = this.streamMultiplexQueue.get(provider) || [];
+    if (queue.length === 0) return;
+
+    this.streamMultiplexQueue.delete(provider);
+    this.metrics.multiplexedBatches++;
+
+    this.logger.debug(`Processing multiplexed batch of ${queue.length} streams for ${provider}`);
+
+    // Process streams with optimized batching
+    const batches = this.chunkArray(queue, 3); // Process in groups of 3
+
+    for (const batch of batches) {
+      const promises = batch.map(options => this.processStreamImmediately(options));
+      await Promise.allSettled(promises);
+
+      // Small delay between batches to prevent overwhelming
+      if (batches.length > 1) {
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+    }
+  }
+
+  /**
+   * Chunk array into smaller arrays
+   * @param {Array} array - Array to chunk
+   * @param {number} size - Chunk size
+   * @returns {Array} Array of chunks
+   */
+  chunkArray(array, size) {
+    const chunks = [];
+    for (let i = 0; i < array.length; i += size) {
+      chunks.push(array.slice(i, i + size));
+    }
+    return chunks;
+  }
+
+  /**
+   * Process stream immediately (non-multiplexed)
+   * @param {object} streamOptions - Stream options
+   */
+  async processStreamImmediately(streamOptions) {
+    const { streamId, response, format, metadata = {} } = streamOptions;
+
+    // Get connection from pool
+    const host = this.extractHostFromMetadata(metadata);
+    const connection = this.getConnection(host);
+
+    try {
+      // Add stream to connection
+      connection.streams.push(streamId);
+
+      await this.processStreamWithParser({
+        streamId,
+        response,
+        format,
+        metadata: { ...metadata, connection }
+      });
+
+    } finally {
+      // Release connection
+      this.releaseConnection(connection);
+      connection.streams = connection.streams.filter(id => id !== streamId);
+    }
+  }
+
+  /**
+   * Extract host from metadata
+   * @param {object} metadata - Stream metadata
+   * @returns {string} Host identifier
+   */
+  extractHostFromMetadata(metadata) {
+    if (metadata.provider === 'chatgpt') return 'chatgpt.com';
+    if (metadata.provider === 'claude') return 'claude.ai';
+    if (metadata.provider === 'gemini') return 'gemini.google.com';
+    return 'unknown';
   }
 
   /**
@@ -47,6 +265,11 @@ export class StreamingManager {
    * Register default parsers
    */
   registerDefaultParsers() {
+    this.registerParser('openai-responses', OpenAIResponsesParser);
+    this.registerParser('openai-sse', OpenAISSEParser);
+    this.registerParser('claude-sse', ClaudeSSEParser);
+    this.registerParser('gemini-sse', GeminiSSEParser);
+
     this.registerParser('delta-encoding-v1', DeltaEncodingV1Parser);
     this.registerParser('sse', SSEParser);
     this.registerParser('json-stream', JSONStreamParser);
@@ -61,7 +284,22 @@ export class StreamingManager {
    * @param {Object} options.metadata - Additional metadata (provider, model, etc.)
    * @param {boolean} options.enableRetry - Whether to retry on failure
    */
-  async processStream({ streamId, response, format, metadata = {}, enableRetry = true }) {
+  async processStream(options) {
+    const { metadata = {} } = options;
+
+    // Use multiplexing for better performance
+    if (this.config.enableStreamMultiplexing && metadata.provider) {
+      this.queueForMultiplexing(options);
+    } else {
+      await this.processStreamImmediately(options);
+    }
+  }
+
+  /**
+   * Process stream with parser (internal method)
+   * @param {Object} options
+   */
+  async processStreamWithParser({ streamId, response, format, metadata = {}, enableRetry = true }) {
     const startTime = Date.now();
 
     // Check capacity
@@ -105,10 +343,16 @@ export class StreamingManager {
    * Handle incoming chunk
    */
   handleChunk(streamId, chunk) {
+    const startTime = Date.now();
     const stream = this.activeStreams.get(streamId);
     if (!stream) return;
 
     stream.chunks.push(chunk);
+    this.metrics.totalChunksProcessed++;
+
+    // Track chunk processing performance
+    const processingTime = Date.now() - startTime;
+    this.updateChunkMetrics(processingTime);
 
     // Send via message bridge
     if (this.messageBridge) {
@@ -135,6 +379,7 @@ export class StreamingManager {
 
     // Update metrics
     this.updateMetrics(streamId, true, processingTime);
+    this.updateProviderMetrics(stream.metadata?.provider, processingTime, stream.chunks.length);
 
     // Send completion message
     if (this.messageBridge) {
@@ -144,7 +389,7 @@ export class StreamingManager {
     // Clean up
     this.activeStreams.delete(streamId);
 
-    this.logger.info(`Stream ${streamId} completed successfully (${processingTime}ms)`);
+    this.logger.info(`Stream ${streamId} completed successfully (${processingTime}ms, ${stream.chunks.length} chunks)`);
   }
 
   /**
@@ -321,13 +566,103 @@ export class StreamingManager {
     // Update average processing time
     this.metrics.totalProcessingTime += processingTime;
     this.metrics.avgProcessingTime = this.metrics.totalProcessingTime / this.metrics.totalStreams;
+
+    // Track peak concurrent streams
+    this.metrics.peakConcurrentStreams = Math.max(
+      this.metrics.peakConcurrentStreams,
+      this.activeStreams.size
+    );
+
+    // Track memory usage (rough estimate)
+    this.updateMemoryMetrics();
+  }
+
+  /**
+   * Update chunk processing metrics
+   * @param {number} processingTime - Time to process chunk
+   */
+  updateChunkMetrics(processingTime) {
+    if (!this.config.enableMetrics) return;
+
+    this.metrics.totalChunksProcessed++;
+    this.metrics.avgChunkProcessingTime =
+      (this.metrics.avgChunkProcessingTime * (this.metrics.totalChunksProcessed - 1) + processingTime) /
+      this.metrics.totalChunksProcessed;
+  }
+
+  /**
+   * Update provider-specific metrics
+   * @param {string} provider - Provider name
+   * @param {number} processingTime - Stream processing time
+   * @param {number} chunkCount - Number of chunks
+   */
+  updateProviderMetrics(provider, processingTime, chunkCount) {
+    if (!provider || !this.config.enableMetrics) return;
+
+    const providerMetrics = this.metrics.performanceByProvider.get(provider) || {
+      streams: 0,
+      totalTime: 0,
+      avgTime: 0,
+      totalChunks: 0,
+      avgChunksPerStream: 0
+    };
+
+    providerMetrics.streams++;
+    providerMetrics.totalTime += processingTime;
+    providerMetrics.avgTime = providerMetrics.totalTime / providerMetrics.streams;
+    providerMetrics.totalChunks += chunkCount;
+    providerMetrics.avgChunksPerStream = providerMetrics.totalChunks / providerMetrics.streams;
+
+    this.metrics.performanceByProvider.set(provider, providerMetrics);
+  }
+
+  /**
+   * Update memory usage metrics
+   */
+  updateMemoryMetrics() {
+    if (typeof performance !== 'undefined' && performance.memory) {
+      this.metrics.memoryUsage = performance.memory.usedJSHeapSize;
+    }
   }
 
   /**
    * Get metrics
    */
   getMetrics() {
-    return { ...this.metrics };
+    const metrics = { ...this.metrics };
+
+    // Convert Map to object for serialization
+    metrics.performanceByProvider = Object.fromEntries(metrics.performanceByProvider);
+    metrics.connectionPoolSize = this.connectionPool.size;
+    metrics.activeConnections = Array.from(this.connectionPool.values())
+      .flat()
+      .filter(conn => conn.inUse).length;
+
+    return metrics;
+  }
+
+  /**
+   * Get performance report
+   * @returns {object} Detailed performance report
+   */
+  getPerformanceReport() {
+    const metrics = this.getMetrics();
+    const report = {
+      ...metrics,
+      efficiency: {
+        connectionPoolHitRate: metrics.connectionPoolHits /
+          (metrics.connectionPoolHits + metrics.connectionPoolMisses) || 0,
+        multiplexingEfficiency: metrics.multiplexedBatches / metrics.totalStreams || 0,
+        successRate: metrics.successfulStreams / metrics.totalStreams || 0
+      },
+      thresholds: {
+        avgProcessingTimeOk: metrics.avgProcessingTime < 5000, // < 5 seconds
+        avgChunkProcessingTimeOk: metrics.avgChunkProcessingTime < 100, // < 100ms per chunk
+        memoryUsageOk: metrics.memoryUsage < 50 * 1024 * 1024 // < 50MB
+      }
+    };
+
+    return report;
   }
 
   /**
@@ -408,6 +743,160 @@ export class BaseStreamParser {
     if (!this.isCancelled) {
       this.onError(error);
     }
+  }
+}
+
+/**
+ * Base SSE Parser - Common SSE parsing logic for all providers
+ */
+export class BaseSSEParser extends BaseStreamParser {
+  constructor(options) {
+    super(options);
+    this.logger = new Logger('BaseSSEParser');
+  }
+
+  /**
+   * Process SSE response stream
+   * @param {Response} response
+   */
+  async process(response) {
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+
+    let buffer = '';
+    let eventData = '';
+    let currentEvent = 'message';
+    let eventId = null;
+
+    try {
+      while (!this.isCancelled) {
+        const { done, value } = await reader.read();
+        if (done) {
+          // Handle stream end - emit final completion
+          this.handleStreamEnd();
+          break;
+        }
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+
+          if (trimmed === '') {
+            if (eventData) {
+              try {
+                await this.processSSEEvent(currentEvent, eventData, eventId);
+              } catch (error) {
+                this.logger.warn(`Error processing SSE event ${currentEvent}:`, error);
+              }
+            }
+
+            currentEvent = 'message';
+            eventData = '';
+            eventId = null;
+          } else if (trimmed.startsWith('event:')) {
+            currentEvent = trimmed.slice(6).trim();
+          } else if (trimmed.startsWith('data:')) {
+            const data = trimmed.slice(5);
+            eventData = eventData ? eventData + '\n' + data : data;
+          } else if (trimmed.startsWith('id:')) {
+            eventId = trimmed.slice(3).trim();
+          } else if (trimmed.startsWith(':') || trimmed.startsWith('retry:')) {
+          }
+        }
+      }
+
+      this.emitComplete();
+
+    } catch (error) {
+      this.emitError(error);
+    }
+  }
+
+  /**
+   * Process a complete SSE event - to be implemented by subclasses
+   * @param {string} eventType - The event type (e.g., 'data', 'error', 'done')
+   * @param {string} data - The event data
+   * @param {string} eventId - The event ID if provided
+   */
+  async processSSEEvent(eventType, data, eventId) {
+    throw new Error('processSSEEvent() must be implemented by subclass');
+  }
+
+  /**
+   * Handle stream end - check for completion detection
+   */
+  handleStreamEnd() {
+    // Default: assume completion on stream end
+    // Subclasses can override for custom completion logic
+  }
+
+  /**
+   * Parse JSON data safely
+   * @param {string} data
+   * @returns {object|null}
+   */
+  parseJSONData(data) {
+    try {
+      return JSON.parse(data);
+    } catch (error) {
+      this.logger.warn('Failed to parse SSE data as JSON:', data, error);
+      return null;
+    }
+  }
+
+  /**
+   * Extract text content from various SSE data formats
+   * @param {object} data - Parsed SSE data
+   * @param {string[]} textPaths - Array of dot-notation paths to check for text
+   * @returns {string}
+   */
+  extractTextContent(data, textPaths = ['content', 'text', 'message']) {
+    if (!data || typeof data !== 'object') return '';
+
+    for (const path of textPaths) {
+      const value = this.getNestedValue(data, path);
+      if (typeof value === 'string' && value.trim()) {
+        return value;
+      }
+    }
+
+    return '';
+  }
+
+  /**
+   * Get nested object value by dot-notation path
+   * @param {object} obj
+   * @param {string} path
+   * @returns {any}
+   */
+  getNestedValue(obj, path) {
+    return path.split('.').reduce((current, key) => current?.[key], obj);
+  }
+
+  /**
+   * Emit a standardized chunk with optional metadata
+   * @param {object} options
+   * @param {string} options.content - The text content
+   * @param {string} [options.role] - Message role
+   * @param {string} [options.model] - Model name
+   * @param {object} [options.metadata] - Additional metadata (usage, tool_calls, etc.)
+   * @param {boolean} [options.isFinal] - Whether this is the final chunk
+   */
+  emitChunkWithMetadata({ content, role = 'assistant', model, metadata = {}, isFinal = false }) {
+    const chunk = {
+      content,
+      role,
+      model: model || this.metadata.model,
+      seq: Date.now(),
+      timestamp: Date.now(),
+      ...metadata,
+      isFinal
+    };
+
+    this.emitChunk(chunk);
   }
 }
 
@@ -717,5 +1206,689 @@ export class JSONStreamParser extends BaseStreamParser {
     }
 
     return objects;
+  }
+}
+
+/**
+ * OpenAI SSE Parser - Handles OpenAI-compatible streaming format
+ * Supports: choices[].delta, finish_reason, usage, tool_calls
+ */
+export class OpenAISSEParser extends BaseSSEParser {
+  constructor(options) {
+    super(options);
+    this.toolCallBuffer = new ToolCallBuffer();
+    this.usageData = null;
+    this.finishReason = null;
+  }
+
+  async processSSEEvent(eventType, data, eventId) {
+    if (eventType === 'data') {
+      if (data.trim() === '[DONE]') {
+        // Handle completion
+        await this.handleCompletion();
+        return;
+      }
+
+      const parsed = this.parseJSONData(data);
+      if (!parsed) return;
+
+      await this.processOpenAIChunk(parsed);
+    }
+  }
+
+  async processOpenAIChunk(chunk) {
+    // Extract usage if present (usually in final chunk)
+    if (chunk.usage) {
+      this.usageData = chunk.usage;
+    }
+
+    // Extract finish_reason
+    if (chunk.choices && chunk.choices[0]?.finish_reason) {
+      this.finishReason = chunk.choices[0].finish_reason;
+    }
+
+    // Process choices
+    if (chunk.choices && chunk.choices.length > 0) {
+      for (const choice of chunk.choices) {
+        const delta = choice.delta || {};
+
+        // Handle content
+        const content = delta.content || '';
+        if (content) {
+          this.emitChunkWithMetadata({
+            content,
+            role: delta.role || 'assistant',
+            model: chunk.model || this.metadata.model
+          });
+        }
+
+        // Handle tool calls
+        if (delta.tool_calls) {
+          const toolCallChunks = this.toolCallBuffer.processToolCalls(delta.tool_calls);
+          for (const toolChunk of toolCallChunks) {
+            this.emitChunkWithMetadata({
+              content: '', // Tool calls don't have content
+              role: 'assistant',
+              model: chunk.model || this.metadata.model,
+              metadata: { tool_call: toolChunk }
+            });
+          }
+        }
+      }
+    }
+  }
+
+  async handleCompletion() {
+    // Emit any remaining tool calls
+    const remainingToolCalls = this.toolCallBuffer.flush();
+    for (const toolCall of remainingToolCalls) {
+      this.emitChunkWithMetadata({
+        content: '',
+        role: 'assistant',
+        model: this.metadata.model,
+        metadata: { tool_call: toolCall },
+        isFinal: true
+      });
+    }
+
+    // Emit final chunk with usage metadata
+    if (this.usageData) {
+      this.emitChunkWithMetadata({
+        content: '',
+        role: 'assistant',
+        model: this.metadata.model,
+        metadata: {
+          usage: this.usageData,
+          finish_reason: this.finishReason
+        },
+        isFinal: true
+      });
+    }
+
+    this.emitComplete();
+  }
+
+  handleStreamEnd() {
+    // OpenAI streams should end with [DONE], but handle unexpected disconnection
+    if (!this.finishReason) {
+      this.logger.warn('Stream ended without proper completion signal');
+      this.handleCompletion();
+    }
+  }
+}
+
+/**
+ * Claude SSE Parser - Handles Anthropic Claude streaming format
+ * Supports: event sequences, content_block_delta, message_stop, tool calls
+ */
+export class ClaudeSSEParser extends BaseSSEParser {
+  constructor(options) {
+    super(options);
+    this.currentMessage = { content: [], tool_calls: [] };
+    this.toolCallBuffer = new ToolCallBuffer();
+    this.usageData = null;
+  }
+
+  async processSSEEvent(eventType, data, eventId) {
+    const parsed = this.parseJSONData(data);
+    if (!parsed) return;
+
+    switch (eventType) {
+      case 'message_start':
+        this.handleMessageStart(parsed);
+        break;
+      case 'content_block_start':
+        this.handleContentBlockStart(parsed);
+        break;
+      case 'content_block_delta':
+        this.handleContentBlockDelta(parsed);
+        break;
+      case 'content_block_stop':
+        this.handleContentBlockStop(parsed);
+        break;
+      case 'message_delta':
+        this.handleMessageDelta(parsed);
+        break;
+      case 'message_stop':
+        this.handleMessageStop(parsed);
+        break;
+      case 'error':
+        this.handleErrorEvent(parsed);
+        break;
+      case 'ping':
+        break;
+    }
+  }
+
+  handleMessageStart(data) {
+    this.currentMessage = {
+      id: data.message?.id,
+      role: data.message?.role || 'assistant',
+      content: [],
+      tool_calls: []
+    };
+
+    if (data.message?.usage) {
+      this.usageData = data.message.usage;
+    }
+  }
+
+  handleContentBlockStart(data) {
+    const block = data.content_block;
+    if (block.type === 'text') {
+      this.currentMessage.content.push({ type: 'text', text: block.text || '' });
+    } else if (block.type === 'tool_use') {
+      this.currentMessage.tool_calls.push({
+        id: block.id,
+        name: block.name,
+        arguments: ''
+      });
+    }
+  }
+
+  handleContentBlockDelta(data) {
+    const delta = data.delta;
+    if (!delta) return;
+
+    if (delta.type === 'text_delta') {
+      const textBlock = this.currentMessage.content
+        .slice()
+        .reverse()
+        .find(block => block.type === 'text');
+
+      if (textBlock) {
+        textBlock.text += delta.text;
+        this.emitChunkWithMetadata({
+          content: delta.text,
+          role: this.currentMessage.role,
+          model: this.metadata.model
+        });
+      }
+    } else if (delta.type === 'input_json_delta') {
+      const toolCall = this.currentMessage.tool_calls[this.currentMessage.tool_calls.length - 1];
+      if (toolCall) {
+        toolCall.arguments += delta.partial_json;
+      }
+    } else if (delta.type === 'thinking_delta') {
+      const thinkingBlock = this.currentMessage.content
+        .slice()
+        .reverse()
+        .find(block => block.type === 'thinking');
+
+      if (!thinkingBlock) {
+        this.currentMessage.content.push({ type: 'thinking', thinking: '' });
+      }
+
+      if (thinkingBlock) {
+        thinkingBlock.thinking += delta.thinking;
+        this.emitChunkWithMetadata({
+          content: '',
+          role: this.currentMessage.role,
+          model: this.metadata.model,
+          metadata: {
+            thinking: delta.thinking,
+            thinking_type: 'delta'
+          }
+        });
+      }
+    }
+  }
+
+  handleContentBlockStop(data) {
+    // Content block completed - emit tool calls if any
+    const toolCall = this.currentMessage.tool_calls[this.currentMessage.tool_calls.length - 1];
+    if (toolCall && toolCall.arguments) {
+      try {
+        const args = JSON.parse(toolCall.arguments);
+        this.emitChunkWithMetadata({
+          content: '',
+          role: this.currentMessage.role,
+          model: this.metadata.model,
+          metadata: {
+            tool_call: {
+              id: toolCall.id,
+              name: toolCall.name,
+              arguments: args
+            }
+          }
+        });
+      } catch (error) {
+        this.logger.warn('Failed to parse tool call arguments:', error);
+      }
+    }
+  }
+
+  handleMessageDelta(data) {
+    // Accumulate usage data
+    if (data.usage) {
+      this.usageData = { ...this.usageData, ...data.usage };
+    }
+
+    // Handle stop reason
+    if (data.delta?.stop_reason) {
+      this.currentMessage.stop_reason = data.delta.stop_reason;
+    }
+  }
+
+  handleMessageStop(data) {
+    // Emit final usage and completion
+    this.emitChunkWithMetadata({
+      content: '',
+      role: this.currentMessage.role,
+      model: this.metadata.model,
+      metadata: {
+        usage: this.usageData,
+        finish_reason: this.currentMessage.stop_reason
+      },
+      isFinal: true
+    });
+
+    this.emitComplete();
+  }
+
+  handleErrorEvent(data) {
+    this.logger.error('Claude SSE error event:', data);
+    this.emitError(new Error(data.error?.message || 'Claude streaming error'));
+  }
+}
+
+/**
+ * Gemini SSE Parser - Handles Google Gemini streaming format
+ * Supports: full responses per chunk, candidates[].content.parts[], finishReason, usageMetadata
+ */
+export class GeminiSSEParser extends BaseSSEParser {
+  constructor(options) {
+    super(options);
+    this.fullTextBuffer = '';
+    this.lastEmittedLength = 0;
+    this.usageData = null;
+    this.finishReason = null;
+  }
+
+  async processSSEEvent(eventType, data, eventId) {
+    if (eventType === 'data') {
+      const parsed = this.parseJSONData(data);
+      if (!parsed) return;
+
+      await this.processGeminiChunk(parsed);
+    }
+  }
+
+  async processGeminiChunk(chunk) {
+    // Extract usage metadata (present on every chunk)
+    if (chunk.usageMetadata) {
+      this.usageData = chunk.usageMetadata;
+    }
+
+    // Process candidates
+    if (chunk.candidates && chunk.candidates.length > 0) {
+      for (const candidate of chunk.candidates) {
+        // Extract finish reason
+        if (candidate.finishReason && candidate.finishReason !== 'STOP') {
+          this.finishReason = candidate.finishReason;
+        }
+
+        // Extract text content
+        if (candidate.content && candidate.content.parts) {
+          const textContent = candidate.content.parts
+            .filter(part => part.text)
+            .map(part => part.text)
+            .join('');
+
+          // Gemini sends full responses per chunk, so we need to diff
+          this.fullTextBuffer += textContent;
+          const newText = this.fullTextBuffer.slice(this.lastEmittedLength);
+
+          if (newText) {
+            this.emitChunkWithMetadata({
+              content: newText,
+              role: candidate.content.role || 'model',
+              model: this.metadata.model
+            });
+
+            this.lastEmittedLength = this.fullTextBuffer.length;
+          }
+        }
+
+        // Handle function calls (full object per chunk)
+        if (candidate.content && candidate.content.parts) {
+          for (const part of candidate.content.parts) {
+            if (part.functionCall) {
+              this.emitChunkWithMetadata({
+                content: '',
+                role: candidate.content.role || 'model',
+                model: this.metadata.model,
+                metadata: { tool_call: part.functionCall }
+              });
+            }
+          }
+        }
+      }
+    }
+  }
+
+  handleStreamEnd() {
+    // Gemini streams end on connection close
+    // Emit final usage metadata if available
+    if (this.usageData) {
+      this.emitChunkWithMetadata({
+        content: '',
+        role: 'model',
+        model: this.metadata.model,
+        metadata: {
+          usage: this.usageData,
+          finish_reason: this.finishReason
+        },
+        isFinal: true
+      });
+    }
+
+    this.emitComplete();
+  }
+}
+
+/**
+ * OpenAI Responses API Parser - Handles new semantic event streaming format
+ * Supports: response.created, response.output_text.delta, response.completed, etc.
+ */
+export class OpenAIResponsesParser extends BaseSSEParser {
+  constructor(options) {
+    super(options);
+    this.currentText = '';
+    this.lastEmittedLength = 0;
+    this.usageData = null;
+    this.finishReason = null;
+    this.functionCallBuffer = new Map();
+  }
+
+  async processSSEEvent(eventType, data, eventId) {
+    if (eventType === 'data') {
+      if (data.trim() === '[DONE]') {
+        await this.handleCompletion();
+        return;
+      }
+
+      const parsed = this.parseJSONData(data);
+      if (!parsed) return;
+
+      await this.processResponseEvent(parsed);
+    } else if (eventType === 'ping') {
+      // Ping events are keep-alive, ignore
+    }
+  }
+
+  async processResponseEvent(event) {
+    const eventType = event.type;
+
+    switch (eventType) {
+      case 'response.created':
+        this.handleResponseCreated(event);
+        break;
+      case 'response.in_progress':
+        this.handleResponseInProgress(event);
+        break;
+      case 'response.output_item_added':
+        this.handleOutputItemAdded(event);
+        break;
+      case 'response.output_text_delta':
+        this.handleTextDelta(event);
+        break;
+      case 'response.output_text_done':
+        this.handleTextDone(event);
+        break;
+      case 'response.function_call_arguments_delta':
+        this.handleFunctionCallDelta(event);
+        break;
+      case 'response.function_call_arguments_done':
+        this.handleFunctionCallDone(event);
+        break;
+      case 'response.completed':
+        this.handleResponseCompleted(event);
+        break;
+      case 'response.failed':
+        this.handleResponseFailed(event);
+        break;
+      case 'error':
+        this.handleErrorEvent(event);
+        break;
+    }
+  }
+
+  handleResponseCreated(event) {
+    this.usageData = event.usage || null;
+    this.emitChunkWithMetadata({
+      content: '',
+      role: 'assistant',
+      model: event.response?.model || this.metadata.model,
+      metadata: { event: 'response_created', response: event.response }
+    });
+  }
+
+  handleResponseInProgress(event) {
+    this.emitChunkWithMetadata({
+      content: '',
+      role: 'assistant',
+      model: event.response?.model || this.metadata.model,
+      metadata: { event: 'response_in_progress' }
+    });
+  }
+
+  handleOutputItemAdded(event) {
+    const item = event.item;
+    if (item?.type === 'message') {
+      this.emitChunkWithMetadata({
+        content: '',
+        role: item.role || 'assistant',
+        model: event.response?.model || this.metadata.model,
+        metadata: { event: 'output_item_added', item }
+      });
+    }
+  }
+
+  handleTextDelta(event) {
+    const delta = event.delta;
+    if (!delta) return;
+
+    this.currentText += delta;
+    const newText = this.currentText.slice(this.lastEmittedLength);
+
+    if (newText) {
+      this.emitChunkWithMetadata({
+        content: newText,
+        role: 'assistant',
+        model: event.response?.model || this.metadata.model
+      });
+      this.lastEmittedLength = this.currentText.length;
+    }
+  }
+
+  handleTextDone(event) {
+    this.emitChunkWithMetadata({
+      content: '',
+      role: 'assistant',
+      model: event.response?.model || this.metadata.model,
+      metadata: { event: 'text_done' },
+      isFinal: false
+    });
+  }
+
+  handleFunctionCallDelta(event) {
+    const callId = event.call_id;
+    const name = event.function_name;
+    const argsDelta = event.arguments_delta;
+
+    if (!this.functionCallBuffer.has(callId)) {
+      this.functionCallBuffer.set(callId, {
+        call_id: callId,
+        name: name || '',
+        arguments: ''
+      });
+    }
+
+    const funcCall = this.functionCallBuffer.get(callId);
+    if (name) funcCall.name = name;
+    if (argsDelta) funcCall.arguments += argsDelta;
+
+    const partialArgs = funcCall.arguments;
+    let parsedArgs = null;
+    try {
+      parsedArgs = partialArgs ? JSON.parse(partialArgs) : {};
+    } catch {
+      parsedArgs = { __partial: true, raw: partialArgs };
+    }
+
+    this.emitChunkWithMetadata({
+      content: '',
+      role: 'assistant',
+      model: event.response?.model || this.metadata.model,
+      metadata: {
+        event: 'function_call_delta',
+        call_id: callId,
+        name: funcCall.name,
+        arguments: parsedArgs,
+        isPartial: true
+      }
+    });
+  }
+
+  handleFunctionCallDone(event) {
+    const callId = event.call_id;
+    const funcCall = this.functionCallBuffer.get(callId);
+    if (!funcCall) return;
+
+    try {
+      const parsedArgs = funcCall.arguments ? JSON.parse(funcCall.arguments) : {};
+      this.emitChunkWithMetadata({
+        content: '',
+        role: 'assistant',
+        model: event.response?.model || this.metadata.model,
+        metadata: {
+          event: 'function_call_done',
+          call_id: callId,
+          name: funcCall.name,
+          arguments: parsedArgs
+        },
+        isFinal: true
+      });
+    } catch (e) {
+      this.logger.warn('Failed to parse function call arguments:', e);
+    }
+
+    this.functionCallBuffer.delete(callId);
+  }
+
+  handleResponseCompleted(event) {
+    this.finishReason = event.finish_reason || 'stop';
+    if (event.usage) {
+      this.usageData = event.usage;
+    }
+    this.emitChunkWithMetadata({
+      content: '',
+      role: 'assistant',
+      model: event.response?.model || this.metadata.model,
+      metadata: {
+        event: 'response_completed',
+        finish_reason: this.finishReason,
+        usage: this.usageData
+      },
+      isFinal: true
+    });
+    this.emitComplete();
+  }
+
+  handleResponseFailed(event) {
+    const errorMsg = event.error?.message || 'Response failed';
+    this.emitError(new Error(errorMsg));
+  }
+
+  handleErrorEvent(event) {
+    const errorMsg = event.error?.message || 'Stream error';
+    this.emitError(new Error(errorMsg));
+  }
+
+  handleStreamEnd() {
+    if (!this.finishReason) {
+      this.logger.warn('Stream ended without completion event');
+      this.handleResponseCompleted({ finish_reason: 'unknown', usage: this.usageData });
+    }
+  }
+}
+
+/**
+ * Tool Call Buffer - Handles incremental tool call construction
+ */
+export class ToolCallBuffer {
+  constructor() {
+    this.activeToolCalls = new Map();
+  }
+
+  processToolCalls(toolCalls) {
+    const completedChunks = [];
+
+    for (const toolCall of toolCalls) {
+      const id = toolCall.id || toolCall.index?.toString();
+      if (!id) continue;
+
+      if (!this.activeToolCalls.has(id)) {
+        this.activeToolCalls.set(id, {
+          id: toolCall.id,
+          index: toolCall.index,
+          name: '',
+          arguments: ''
+        });
+      }
+
+      const active = this.activeToolCalls.get(id);
+
+      if (toolCall.function?.name) {
+        active.name += toolCall.function.name;
+      }
+
+      if (toolCall.function?.arguments) {
+        active.arguments += toolCall.function.arguments;
+      }
+
+      if (active.name && active.arguments) {
+        const parsed = this.tryParseJSON(active.arguments);
+        if (parsed !== null) {
+          completedChunks.push({
+            id: active.id,
+            index: active.index,
+            name: active.name,
+            arguments: parsed
+          });
+          this.activeToolCalls.delete(id);
+        }
+      }
+    }
+
+    return completedChunks;
+  }
+
+  tryParseJSON(str) {
+    try {
+      return JSON.parse(str);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Flush any remaining incomplete tool calls
+   * @returns {Array} - Array of flushed tool calls
+   */
+  flush() {
+    const remaining = Array.from(this.activeToolCalls.values())
+      .filter(call => call.name && call.arguments)
+      .map(call => ({
+        id: call.id,
+        index: call.index,
+        name: call.name,
+        arguments: call.arguments.startsWith('{') ?
+          JSON.parse(call.arguments) : call.arguments
+      }));
+
+    this.activeToolCalls.clear();
+    return remaining;
   }
 }

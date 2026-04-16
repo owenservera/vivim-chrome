@@ -1,12 +1,5 @@
-/**
- * UI Entry Point - Side Panel
- * Initializes the modular UI components
- */
-
-// Import core UI functionality (will be expanded)
 import { SidePanelController } from './SidePanelController.js';
 
-// Initialize when DOM is ready
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', initUI);
 } else {
@@ -14,16 +7,26 @@ if (document.readyState === 'loading') {
 }
 
 function initUI() {
-  console.log('[UI] Initializing modular side panel...');
+  console.log('[UI] Initializing VIVIM side panel...');
+  console.log('[UI] DOM state:', document.readyState);
+  console.log('[UI] Looking for elements...');
+  
+  console.log('[UI] promptInput:', !!document.getElementById('promptInput'));
+  console.log('[UI] sendBtn:', !!document.getElementById('sendBtn'));
+  console.log('[UI] messagesArea:', !!document.getElementById('messagesArea'));
 
   const controller = new SidePanelController();
 
-  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  const UI_RESPONSE_TYPES = new Set([
+  'GET_CONVERSATION',
+  'GET_CONVERSATION_HISTORY'
+]);
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     console.log('[UI] Message received:', message.type, message);
     controller.handleMessage(message, sender, sendResponse);
-    return message.type === 'GET_CONVERSATION' ||
-           message.type === 'GET_CONVERSATION_HISTORY';
+    return UI_RESPONSE_TYPES.has(message.type);
   });
 
-  console.log('[UI] Side panel initialized');
+  console.log('[UI] Side panel initialized successfully');
 }

@@ -1,0 +1,1915 @@
+{
+  "config": {
+    "configFile": "C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\playwright.config.ts",
+    "rootDir": "C:/0-BlackBoxProject-0/vivim-app-og/vivim-app/extensions/chrome/poc/test/e2e",
+    "forbidOnly": false,
+    "fullyParallel": true,
+    "globalSetup": null,
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 4
+    },
+    "preserveOutput": "always",
+    "projects": [
+      {
+        "outputDir": "C:/0-BlackBoxProject-0/vivim-app-og/vivim-app/extensions/chrome/poc/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 4
+        },
+        "id": "chromium",
+        "name": "chromium",
+        "testDir": "C:/0-BlackBoxProject-0/vivim-app-og/vivim-app/extensions/chrome/poc/test/e2e",
+        "testIgnore": [],
+        "testMatch": [
+          "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+        ],
+        "timeout": 30000
+      }
+    ],
+    "quiet": false,
+    "reporter": [
+      [
+        "html",
+        {
+          "outputFile": "playwright-report/index.html"
+        }
+      ],
+      [
+        "json",
+        {
+          "outputFile": "playwright-report/results.json"
+        }
+      ],
+      [
+        "list",
+        null
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "shard": null,
+    "tags": [],
+    "updateSnapshots": "missing",
+    "updateSourceMethod": "patch",
+    "version": "1.59.1",
+    "workers": 4,
+    "webServer": null
+  },
+  "suites": [
+    {
+      "title": "buttons.spec.ts",
+      "file": "buttons.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "SidePanel Button Interactions",
+          "file": "buttons.spec.ts",
+          "line": 3,
+          "column": 6,
+          "specs": [
+            {
+              "title": "newChatBtn clears conversation",
+              "ok": false,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "timedOut",
+                      "duration": 34170,
+                      "error": {
+                        "message": "\u001b[31mTest timeout of 30000ms exceeded while running \"beforeEach\" hook.\u001b[39m",
+                        "stack": "\u001b[31mTest timeout of 30000ms exceeded while running \"beforeEach\" hook.\u001b[39m\n    at C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test\\e2e\\buttons.spec.ts:4:8",
+                        "location": {
+                          "file": "C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test\\e2e\\buttons.spec.ts",
+                          "column": 8,
+                          "line": 4
+                        },
+                        "snippet": "\u001b[0m \u001b[90m 2 |\u001b[39m\n \u001b[90m 3 |\u001b[39m test\u001b[33m.\u001b[39mdescribe(\u001b[32m'SidePanel Button Interactions'\u001b[39m\u001b[33m,\u001b[39m () \u001b[33m=>\u001b[39m {\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 4 |\u001b[39m   test\u001b[33m.\u001b[39mbeforeEach(\u001b[36masync\u001b[39m ({ page\u001b[33m,\u001b[39m extensionId }) \u001b[33m=>\u001b[39m {\n \u001b[90m   |\u001b[39m        \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 5 |\u001b[39m     \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mgoto(\u001b[32m`chrome-extension://${extensionId}/sidepanel.html`\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m 6 |\u001b[39m   })\u001b[33m;\u001b[39m\n \u001b[90m 7 |\u001b[39m\u001b[0m"
+                      },
+                      "errors": [
+                        {
+                          "location": {
+                            "file": "C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test\\e2e\\buttons.spec.ts",
+                            "column": 8,
+                            "line": 4
+                          },
+                          "message": "\u001b[31mTest timeout of 30000ms exceeded while running \"beforeEach\" hook.\u001b[39m\n\n  2 |\n  3 | test.describe('SidePanel Button Interactions', () => {\n> 4 |   test.beforeEach(async ({ page, extensionId }) => {\n    |        ^\n  5 |     await page.goto(`chrome-extension://${extensionId}/sidepanel.html`);\n  6 |   });\n  7 |\n    at C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test\\e2e\\buttons.spec.ts:4:8"
+                        },
+                        {
+                          "location": {
+                            "file": "C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test\\e2e\\fixtures\\extension.ts",
+                            "column": 37,
+                            "line": 34
+                          },
+                          "message": "Error: browserContext.waitForEvent: Target page, context or browser has been closed\n\n   at fixtures\\extension.ts:34\n\n  32 |     let [serviceWorker] = context.serviceWorkers();\n  33 |     if (!serviceWorker) {\n> 34 |       serviceWorker = await context.waitForEvent('serviceworker');\n     |                                     ^\n  35 |     }\n  36 |\n  37 |     const extensionId = await serviceWorker.evaluate(() => {\n    at Object.extensionId (C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test\\e2e\\fixtures\\extension.ts:34:37)"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-04-16T15:23:13.573Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test-results\\buttons-SidePanel-Button-I-07f68-ChatBtn-clears-conversation-chromium\\test-failed-2.png"
+                        },
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test-results\\buttons-SidePanel-Button-I-07f68-ChatBtn-clears-conversation-chromium\\test-failed-1.png"
+                        },
+                        {
+                          "name": "error-context",
+                          "contentType": "text/markdown",
+                          "path": "C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test-results\\buttons-SidePanel-Button-I-07f68-ChatBtn-clears-conversation-chromium\\error-context.md"
+                        }
+                      ],
+                      "errorLocation": {
+                        "file": "C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test\\e2e\\buttons.spec.ts",
+                        "column": 8,
+                        "line": 4
+                      }
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "306c8654303d07df1d26-240f3911c748f3fb7f0c",
+              "file": "buttons.spec.ts",
+              "line": 8,
+              "column": 3
+            },
+            {
+              "title": "historyBtn shows history modal",
+              "ok": false,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 1,
+                      "parallelIndex": 1,
+                      "status": "timedOut",
+                      "duration": 48095,
+                      "error": {
+                        "message": "\u001b[31mTest timeout of 30000ms exceeded while running \"beforeEach\" hook.\u001b[39m",
+                        "stack": "\u001b[31mTest timeout of 30000ms exceeded while running \"beforeEach\" hook.\u001b[39m\n    at C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test\\e2e\\buttons.spec.ts:4:8",
+                        "location": {
+                          "file": "C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test\\e2e\\buttons.spec.ts",
+                          "column": 8,
+                          "line": 4
+                        },
+                        "snippet": "\u001b[0m \u001b[90m 2 |\u001b[39m\n \u001b[90m 3 |\u001b[39m test\u001b[33m.\u001b[39mdescribe(\u001b[32m'SidePanel Button Interactions'\u001b[39m\u001b[33m,\u001b[39m () \u001b[33m=>\u001b[39m {\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 4 |\u001b[39m   test\u001b[33m.\u001b[39mbeforeEach(\u001b[36masync\u001b[39m ({ page\u001b[33m,\u001b[39m extensionId }) \u001b[33m=>\u001b[39m {\n \u001b[90m   |\u001b[39m        \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 5 |\u001b[39m     \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mgoto(\u001b[32m`chrome-extension://${extensionId}/sidepanel.html`\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m 6 |\u001b[39m   })\u001b[33m;\u001b[39m\n \u001b[90m 7 |\u001b[39m\u001b[0m"
+                      },
+                      "errors": [
+                        {
+                          "location": {
+                            "file": "C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test\\e2e\\buttons.spec.ts",
+                            "column": 8,
+                            "line": 4
+                          },
+                          "message": "\u001b[31mTest timeout of 30000ms exceeded while running \"beforeEach\" hook.\u001b[39m\n\n  2 |\n  3 | test.describe('SidePanel Button Interactions', () => {\n> 4 |   test.beforeEach(async ({ page, extensionId }) => {\n    |        ^\n  5 |     await page.goto(`chrome-extension://${extensionId}/sidepanel.html`);\n  6 |   });\n  7 |\n    at C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test\\e2e\\buttons.spec.ts:4:8"
+                        },
+                        {
+                          "location": {
+                            "file": "C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test\\e2e\\fixtures\\extension.ts",
+                            "column": 37,
+                            "line": 34
+                          },
+                          "message": "Error: browserContext.waitForEvent: Target page, context or browser has been closed\n\n   at fixtures\\extension.ts:34\n\n  32 |     let [serviceWorker] = context.serviceWorkers();\n  33 |     if (!serviceWorker) {\n> 34 |       serviceWorker = await context.waitForEvent('serviceworker');\n     |                                     ^\n  35 |     }\n  36 |\n  37 |     const extensionId = await serviceWorker.evaluate(() => {\n    at Object.extensionId (C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test\\e2e\\fixtures\\extension.ts:34:37)"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-04-16T15:23:13.319Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test-results\\buttons-SidePanel-Button-I-02d50-toryBtn-shows-history-modal-chromium\\test-failed-2.png"
+                        },
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test-results\\buttons-SidePanel-Button-I-02d50-toryBtn-shows-history-modal-chromium\\test-failed-1.png"
+                        },
+                        {
+                          "name": "error-context",
+                          "contentType": "text/markdown",
+                          "path": "C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test-results\\buttons-SidePanel-Button-I-02d50-toryBtn-shows-history-modal-chromium\\error-context.md"
+                        }
+                      ],
+                      "errorLocation": {
+                        "file": "C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test\\e2e\\buttons.spec.ts",
+                        "column": 8,
+                        "line": 4
+                      }
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "306c8654303d07df1d26-e109905e10c96f81cb95",
+              "file": "buttons.spec.ts",
+              "line": 18,
+              "column": 3
+            },
+            {
+              "title": "exportBtn shows export menu",
+              "ok": false,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 2,
+                      "parallelIndex": 2,
+                      "status": "timedOut",
+                      "duration": 54268,
+                      "error": {
+                        "message": "\u001b[31mTest timeout of 30000ms exceeded while running \"beforeEach\" hook.\u001b[39m",
+                        "stack": "\u001b[31mTest timeout of 30000ms exceeded while running \"beforeEach\" hook.\u001b[39m\n    at C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test\\e2e\\buttons.spec.ts:4:8",
+                        "location": {
+                          "file": "C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test\\e2e\\buttons.spec.ts",
+                          "column": 8,
+                          "line": 4
+                        },
+                        "snippet": "\u001b[0m \u001b[90m 2 |\u001b[39m\n \u001b[90m 3 |\u001b[39m test\u001b[33m.\u001b[39mdescribe(\u001b[32m'SidePanel Button Interactions'\u001b[39m\u001b[33m,\u001b[39m () \u001b[33m=>\u001b[39m {\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 4 |\u001b[39m   test\u001b[33m.\u001b[39mbeforeEach(\u001b[36masync\u001b[39m ({ page\u001b[33m,\u001b[39m extensionId }) \u001b[33m=>\u001b[39m {\n \u001b[90m   |\u001b[39m        \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 5 |\u001b[39m     \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mgoto(\u001b[32m`chrome-extension://${extensionId}/sidepanel.html`\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m 6 |\u001b[39m   })\u001b[33m;\u001b[39m\n \u001b[90m 7 |\u001b[39m\u001b[0m"
+                      },
+                      "errors": [
+                        {
+                          "location": {
+                            "file": "C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test\\e2e\\buttons.spec.ts",
+                            "column": 8,
+                            "line": 4
+                          },
+                          "message": "\u001b[31mTest timeout of 30000ms exceeded while running \"beforeEach\" hook.\u001b[39m\n\n  2 |\n  3 | test.describe('SidePanel Button Interactions', () => {\n> 4 |   test.beforeEach(async ({ page, extensionId }) => {\n    |        ^\n  5 |     await page.goto(`chrome-extension://${extensionId}/sidepanel.html`);\n  6 |   });\n  7 |\n    at C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test\\e2e\\buttons.spec.ts:4:8"
+                        },
+                        {
+                          "location": {
+                            "file": "C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test\\e2e\\fixtures\\extension.ts",
+                            "column": 37,
+                            "line": 34
+                          },
+                          "message": "Error: browserContext.waitForEvent: Target page, context or browser has been closed\n\n   at fixtures\\extension.ts:34\n\n  32 |     let [serviceWorker] = context.serviceWorkers();\n  33 |     if (!serviceWorker) {\n> 34 |       serviceWorker = await context.waitForEvent('serviceworker');\n     |                                     ^\n  35 |     }\n  36 |\n  37 |     const extensionId = await serviceWorker.evaluate(() => {\n    at Object.extensionId (C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test\\e2e\\fixtures\\extension.ts:34:37)"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-04-16T15:23:13.435Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test-results\\buttons-SidePanel-Button-I-f7578-exportBtn-shows-export-menu-chromium\\test-failed-2.png"
+                        },
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test-results\\buttons-SidePanel-Button-I-f7578-exportBtn-shows-export-menu-chromium\\test-failed-1.png"
+                        },
+                        {
+                          "name": "error-context",
+                          "contentType": "text/markdown",
+                          "path": "C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test-results\\buttons-SidePanel-Button-I-f7578-exportBtn-shows-export-menu-chromium\\error-context.md"
+                        }
+                      ],
+                      "errorLocation": {
+                        "file": "C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test\\e2e\\buttons.spec.ts",
+                        "column": 8,
+                        "line": 4
+                      }
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "306c8654303d07df1d26-06e0dac24d6e78b362ff",
+              "file": "buttons.spec.ts",
+              "line": 26,
+              "column": 3
+            },
+            {
+              "title": "providerSelect shows provider menu",
+              "ok": false,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 3,
+                      "parallelIndex": 3,
+                      "status": "timedOut",
+                      "duration": 33641,
+                      "error": {
+                        "message": "\u001b[31mTest timeout of 30000ms exceeded while running \"beforeEach\" hook.\u001b[39m",
+                        "stack": "\u001b[31mTest timeout of 30000ms exceeded while running \"beforeEach\" hook.\u001b[39m\n    at C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test\\e2e\\buttons.spec.ts:4:8",
+                        "location": {
+                          "file": "C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test\\e2e\\buttons.spec.ts",
+                          "column": 8,
+                          "line": 4
+                        },
+                        "snippet": "\u001b[0m \u001b[90m 2 |\u001b[39m\n \u001b[90m 3 |\u001b[39m test\u001b[33m.\u001b[39mdescribe(\u001b[32m'SidePanel Button Interactions'\u001b[39m\u001b[33m,\u001b[39m () \u001b[33m=>\u001b[39m {\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 4 |\u001b[39m   test\u001b[33m.\u001b[39mbeforeEach(\u001b[36masync\u001b[39m ({ page\u001b[33m,\u001b[39m extensionId }) \u001b[33m=>\u001b[39m {\n \u001b[90m   |\u001b[39m        \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 5 |\u001b[39m     \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mgoto(\u001b[32m`chrome-extension://${extensionId}/sidepanel.html`\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m 6 |\u001b[39m   })\u001b[33m;\u001b[39m\n \u001b[90m 7 |\u001b[39m\u001b[0m"
+                      },
+                      "errors": [
+                        {
+                          "location": {
+                            "file": "C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test\\e2e\\buttons.spec.ts",
+                            "column": 8,
+                            "line": 4
+                          },
+                          "message": "\u001b[31mTest timeout of 30000ms exceeded while running \"beforeEach\" hook.\u001b[39m\n\n  2 |\n  3 | test.describe('SidePanel Button Interactions', () => {\n> 4 |   test.beforeEach(async ({ page, extensionId }) => {\n    |        ^\n  5 |     await page.goto(`chrome-extension://${extensionId}/sidepanel.html`);\n  6 |   });\n  7 |\n    at C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test\\e2e\\buttons.spec.ts:4:8"
+                        },
+                        {
+                          "location": {
+                            "file": "C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test\\e2e\\fixtures\\extension.ts",
+                            "column": 37,
+                            "line": 34
+                          },
+                          "message": "Error: browserContext.waitForEvent: Target page, context or browser has been closed\n\n   at fixtures\\extension.ts:34\n\n  32 |     let [serviceWorker] = context.serviceWorkers();\n  33 |     if (!serviceWorker) {\n> 34 |       serviceWorker = await context.waitForEvent('serviceworker');\n     |                                     ^\n  35 |     }\n  36 |\n  37 |     const extensionId = await serviceWorker.evaluate(() => {\n    at Object.extensionId (C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test\\e2e\\fixtures\\extension.ts:34:37)"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-04-16T15:23:13.754Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test-results\\buttons-SidePanel-Button-I-f5bab-rSelect-shows-provider-menu-chromium\\test-failed-2.png"
+                        },
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test-results\\buttons-SidePanel-Button-I-f5bab-rSelect-shows-provider-menu-chromium\\test-failed-1.png"
+                        },
+                        {
+                          "name": "error-context",
+                          "contentType": "text/markdown",
+                          "path": "C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test-results\\buttons-SidePanel-Button-I-f5bab-rSelect-shows-provider-menu-chromium\\error-context.md"
+                        }
+                      ],
+                      "errorLocation": {
+                        "file": "C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test\\e2e\\buttons.spec.ts",
+                        "column": 8,
+                        "line": 4
+                      }
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "306c8654303d07df1d26-37c85dac5d2f0caa45d7",
+              "file": "buttons.spec.ts",
+              "line": 34,
+              "column": 3
+            },
+            {
+              "title": "send button is disabled when input empty",
+              "ok": false,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 4,
+                      "parallelIndex": 3,
+                      "status": "timedOut",
+                      "duration": 57948,
+                      "error": {
+                        "message": "\u001b[31mTest timeout of 30000ms exceeded while running \"beforeEach\" hook.\u001b[39m",
+                        "stack": "\u001b[31mTest timeout of 30000ms exceeded while running \"beforeEach\" hook.\u001b[39m\n    at C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test\\e2e\\buttons.spec.ts:4:8",
+                        "location": {
+                          "file": "C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test\\e2e\\buttons.spec.ts",
+                          "column": 8,
+                          "line": 4
+                        },
+                        "snippet": "\u001b[0m \u001b[90m 2 |\u001b[39m\n \u001b[90m 3 |\u001b[39m test\u001b[33m.\u001b[39mdescribe(\u001b[32m'SidePanel Button Interactions'\u001b[39m\u001b[33m,\u001b[39m () \u001b[33m=>\u001b[39m {\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 4 |\u001b[39m   test\u001b[33m.\u001b[39mbeforeEach(\u001b[36masync\u001b[39m ({ page\u001b[33m,\u001b[39m extensionId }) \u001b[33m=>\u001b[39m {\n \u001b[90m   |\u001b[39m        \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 5 |\u001b[39m     \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mgoto(\u001b[32m`chrome-extension://${extensionId}/sidepanel.html`\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m 6 |\u001b[39m   })\u001b[33m;\u001b[39m\n \u001b[90m 7 |\u001b[39m\u001b[0m"
+                      },
+                      "errors": [
+                        {
+                          "location": {
+                            "file": "C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test\\e2e\\buttons.spec.ts",
+                            "column": 8,
+                            "line": 4
+                          },
+                          "message": "\u001b[31mTest timeout of 30000ms exceeded while running \"beforeEach\" hook.\u001b[39m\n\n  2 |\n  3 | test.describe('SidePanel Button Interactions', () => {\n> 4 |   test.beforeEach(async ({ page, extensionId }) => {\n    |        ^\n  5 |     await page.goto(`chrome-extension://${extensionId}/sidepanel.html`);\n  6 |   });\n  7 |\n    at C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test\\e2e\\buttons.spec.ts:4:8"
+                        },
+                        {
+                          "location": {
+                            "file": "C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test\\e2e\\fixtures\\extension.ts",
+                            "column": 37,
+                            "line": 34
+                          },
+                          "message": "Error: browserContext.waitForEvent: Target page, context or browser has been closed\n\n   at fixtures\\extension.ts:34\n\n  32 |     let [serviceWorker] = context.serviceWorkers();\n  33 |     if (!serviceWorker) {\n> 34 |       serviceWorker = await context.waitForEvent('serviceworker');\n     |                                     ^\n  35 |     }\n  36 |\n  37 |     const extensionId = await serviceWorker.evaluate(() => {\n    at Object.extensionId (C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test\\e2e\\fixtures\\extension.ts:34:37)"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-04-16T15:23:56.034Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test-results\\buttons-SidePanel-Button-I-44786-s-disabled-when-input-empty-chromium\\test-failed-2.png"
+                        },
+                        {
+                          "name": "error-context",
+                          "contentType": "text/markdown",
+                          "path": "C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test-results\\buttons-SidePanel-Button-I-44786-s-disabled-when-input-empty-chromium\\error-context.md"
+                        }
+                      ],
+                      "errorLocation": {
+                        "file": "C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test\\e2e\\buttons.spec.ts",
+                        "column": 8,
+                        "line": 4
+                      }
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "306c8654303d07df1d26-e20f1f6052426407becf",
+              "file": "buttons.spec.ts",
+              "line": 42,
+              "column": 3
+            },
+            {
+              "title": "send button is enabled when input has text",
+              "ok": false,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 5,
+                      "parallelIndex": 0,
+                      "status": "timedOut",
+                      "duration": 57355,
+                      "error": {
+                        "message": "\u001b[31mTest timeout of 30000ms exceeded while running \"beforeEach\" hook.\u001b[39m",
+                        "stack": "\u001b[31mTest timeout of 30000ms exceeded while running \"beforeEach\" hook.\u001b[39m\n    at C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test\\e2e\\buttons.spec.ts:4:8",
+                        "location": {
+                          "file": "C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test\\e2e\\buttons.spec.ts",
+                          "column": 8,
+                          "line": 4
+                        },
+                        "snippet": "\u001b[0m \u001b[90m 2 |\u001b[39m\n \u001b[90m 3 |\u001b[39m test\u001b[33m.\u001b[39mdescribe(\u001b[32m'SidePanel Button Interactions'\u001b[39m\u001b[33m,\u001b[39m () \u001b[33m=>\u001b[39m {\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 4 |\u001b[39m   test\u001b[33m.\u001b[39mbeforeEach(\u001b[36masync\u001b[39m ({ page\u001b[33m,\u001b[39m extensionId }) \u001b[33m=>\u001b[39m {\n \u001b[90m   |\u001b[39m        \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 5 |\u001b[39m     \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mgoto(\u001b[32m`chrome-extension://${extensionId}/sidepanel.html`\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m 6 |\u001b[39m   })\u001b[33m;\u001b[39m\n \u001b[90m 7 |\u001b[39m\u001b[0m"
+                      },
+                      "errors": [
+                        {
+                          "location": {
+                            "file": "C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test\\e2e\\buttons.spec.ts",
+                            "column": 8,
+                            "line": 4
+                          },
+                          "message": "\u001b[31mTest timeout of 30000ms exceeded while running \"beforeEach\" hook.\u001b[39m\n\n  2 |\n  3 | test.describe('SidePanel Button Interactions', () => {\n> 4 |   test.beforeEach(async ({ page, extensionId }) => {\n    |        ^\n  5 |     await page.goto(`chrome-extension://${extensionId}/sidepanel.html`);\n  6 |   });\n  7 |\n    at C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test\\e2e\\buttons.spec.ts:4:8"
+                        },
+                        {
+                          "location": {
+                            "file": "C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test\\e2e\\fixtures\\extension.ts",
+                            "column": 37,
+                            "line": 34
+                          },
+                          "message": "Error: browserContext.waitForEvent: Target page, context or browser has been closed\n\n   at fixtures\\extension.ts:34\n\n  32 |     let [serviceWorker] = context.serviceWorkers();\n  33 |     if (!serviceWorker) {\n> 34 |       serviceWorker = await context.waitForEvent('serviceworker');\n     |                                     ^\n  35 |     }\n  36 |\n  37 |     const extensionId = await serviceWorker.evaluate(() => {\n    at Object.extensionId (C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test\\e2e\\fixtures\\extension.ts:34:37)"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-04-16T15:23:56.852Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test-results\\buttons-SidePanel-Button-I-a612e-enabled-when-input-has-text-chromium\\test-failed-2.png"
+                        },
+                        {
+                          "name": "error-context",
+                          "contentType": "text/markdown",
+                          "path": "C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test-results\\buttons-SidePanel-Button-I-a612e-enabled-when-input-has-text-chromium\\error-context.md"
+                        }
+                      ],
+                      "errorLocation": {
+                        "file": "C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test\\e2e\\buttons.spec.ts",
+                        "column": 8,
+                        "line": 4
+                      }
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "306c8654303d07df1d26-216b4c7321f3e3000e8b",
+              "file": "buttons.spec.ts",
+              "line": 50,
+              "column": 3
+            },
+            {
+              "title": "reloadBtn triggers reload",
+              "ok": false,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 6,
+                      "parallelIndex": 1,
+                      "status": "timedOut",
+                      "duration": 47025,
+                      "error": {
+                        "message": "\u001b[31mTest timeout of 30000ms exceeded while running \"beforeEach\" hook.\u001b[39m",
+                        "stack": "\u001b[31mTest timeout of 30000ms exceeded while running \"beforeEach\" hook.\u001b[39m\n    at C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test\\e2e\\buttons.spec.ts:4:8",
+                        "location": {
+                          "file": "C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test\\e2e\\buttons.spec.ts",
+                          "column": 8,
+                          "line": 4
+                        },
+                        "snippet": "\u001b[0m \u001b[90m 2 |\u001b[39m\n \u001b[90m 3 |\u001b[39m test\u001b[33m.\u001b[39mdescribe(\u001b[32m'SidePanel Button Interactions'\u001b[39m\u001b[33m,\u001b[39m () \u001b[33m=>\u001b[39m {\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 4 |\u001b[39m   test\u001b[33m.\u001b[39mbeforeEach(\u001b[36masync\u001b[39m ({ page\u001b[33m,\u001b[39m extensionId }) \u001b[33m=>\u001b[39m {\n \u001b[90m   |\u001b[39m        \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 5 |\u001b[39m     \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mgoto(\u001b[32m`chrome-extension://${extensionId}/sidepanel.html`\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m 6 |\u001b[39m   })\u001b[33m;\u001b[39m\n \u001b[90m 7 |\u001b[39m\u001b[0m"
+                      },
+                      "errors": [
+                        {
+                          "location": {
+                            "file": "C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test\\e2e\\buttons.spec.ts",
+                            "column": 8,
+                            "line": 4
+                          },
+                          "message": "\u001b[31mTest timeout of 30000ms exceeded while running \"beforeEach\" hook.\u001b[39m\n\n  2 |\n  3 | test.describe('SidePanel Button Interactions', () => {\n> 4 |   test.beforeEach(async ({ page, extensionId }) => {\n    |        ^\n  5 |     await page.goto(`chrome-extension://${extensionId}/sidepanel.html`);\n  6 |   });\n  7 |\n    at C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test\\e2e\\buttons.spec.ts:4:8"
+                        },
+                        {
+                          "location": {
+                            "file": "C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test\\e2e\\fixtures\\extension.ts",
+                            "column": 37,
+                            "line": 34
+                          },
+                          "message": "Error: browserContext.waitForEvent: Target page, context or browser has been closed\n\n   at fixtures\\extension.ts:34\n\n  32 |     let [serviceWorker] = context.serviceWorkers();\n  33 |     if (!serviceWorker) {\n> 34 |       serviceWorker = await context.waitForEvent('serviceworker');\n     |                                     ^\n  35 |     }\n  36 |\n  37 |     const extensionId = await serviceWorker.evaluate(() => {\n    at Object.extensionId (C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test\\e2e\\fixtures\\extension.ts:34:37)"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-04-16T15:24:12.502Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test-results\\buttons-SidePanel-Button-I-458e9-s-reloadBtn-triggers-reload-chromium\\test-failed-2.png"
+                        },
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test-results\\buttons-SidePanel-Button-I-458e9-s-reloadBtn-triggers-reload-chromium\\test-failed-1.png"
+                        },
+                        {
+                          "name": "error-context",
+                          "contentType": "text/markdown",
+                          "path": "C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test-results\\buttons-SidePanel-Button-I-458e9-s-reloadBtn-triggers-reload-chromium\\error-context.md"
+                        }
+                      ],
+                      "errorLocation": {
+                        "file": "C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test\\e2e\\buttons.spec.ts",
+                        "column": 8,
+                        "line": 4
+                      }
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "306c8654303d07df1d26-3a9089886a0bd8ff91fb",
+              "file": "buttons.spec.ts",
+              "line": 58,
+              "column": 3
+            },
+            {
+              "title": "clearBtn clears with confirmation",
+              "ok": false,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 7,
+                      "parallelIndex": 2,
+                      "status": "timedOut",
+                      "duration": 40464,
+                      "error": {
+                        "message": "\u001b[31mTest timeout of 30000ms exceeded while running \"beforeEach\" hook.\u001b[39m",
+                        "stack": "\u001b[31mTest timeout of 30000ms exceeded while running \"beforeEach\" hook.\u001b[39m\n    at C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test\\e2e\\buttons.spec.ts:4:8",
+                        "location": {
+                          "file": "C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test\\e2e\\buttons.spec.ts",
+                          "column": 8,
+                          "line": 4
+                        },
+                        "snippet": "\u001b[0m \u001b[90m 2 |\u001b[39m\n \u001b[90m 3 |\u001b[39m test\u001b[33m.\u001b[39mdescribe(\u001b[32m'SidePanel Button Interactions'\u001b[39m\u001b[33m,\u001b[39m () \u001b[33m=>\u001b[39m {\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 4 |\u001b[39m   test\u001b[33m.\u001b[39mbeforeEach(\u001b[36masync\u001b[39m ({ page\u001b[33m,\u001b[39m extensionId }) \u001b[33m=>\u001b[39m {\n \u001b[90m   |\u001b[39m        \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 5 |\u001b[39m     \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mgoto(\u001b[32m`chrome-extension://${extensionId}/sidepanel.html`\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m 6 |\u001b[39m   })\u001b[33m;\u001b[39m\n \u001b[90m 7 |\u001b[39m\u001b[0m"
+                      },
+                      "errors": [
+                        {
+                          "location": {
+                            "file": "C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test\\e2e\\buttons.spec.ts",
+                            "column": 8,
+                            "line": 4
+                          },
+                          "message": "\u001b[31mTest timeout of 30000ms exceeded while running \"beforeEach\" hook.\u001b[39m\n\n  2 |\n  3 | test.describe('SidePanel Button Interactions', () => {\n> 4 |   test.beforeEach(async ({ page, extensionId }) => {\n    |        ^\n  5 |     await page.goto(`chrome-extension://${extensionId}/sidepanel.html`);\n  6 |   });\n  7 |\n    at C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test\\e2e\\buttons.spec.ts:4:8"
+                        },
+                        {
+                          "location": {
+                            "file": "C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test\\e2e\\fixtures\\extension.ts",
+                            "column": 37,
+                            "line": 34
+                          },
+                          "message": "Error: browserContext.waitForEvent: Target page, context or browser has been closed\n\n   at fixtures\\extension.ts:34\n\n  32 |     let [serviceWorker] = context.serviceWorkers();\n  33 |     if (!serviceWorker) {\n> 34 |       serviceWorker = await context.waitForEvent('serviceworker');\n     |                                     ^\n  35 |     }\n  36 |\n  37 |     const extensionId = await serviceWorker.evaluate(() => {\n    at Object.extensionId (C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test\\e2e\\fixtures\\extension.ts:34:37)"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-04-16T15:24:17.813Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test-results\\buttons-SidePanel-Button-I-3f100-tn-clears-with-confirmation-chromium\\test-failed-2.png"
+                        },
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test-results\\buttons-SidePanel-Button-I-3f100-tn-clears-with-confirmation-chromium\\test-failed-1.png"
+                        },
+                        {
+                          "name": "error-context",
+                          "contentType": "text/markdown",
+                          "path": "C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test-results\\buttons-SidePanel-Button-I-3f100-tn-clears-with-confirmation-chromium\\error-context.md"
+                        }
+                      ],
+                      "errorLocation": {
+                        "file": "C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc\\test\\e2e\\buttons.spec.ts",
+                        "column": 8,
+                        "line": 4
+                      }
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "306c8654303d07df1d26-bbdda4b19214435ab08b",
+              "file": "buttons.spec.ts",
+              "line": 66,
+              "column": 3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "messaging.spec.ts",
+      "file": "messaging.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "Extension Messaging",
+          "file": "messaging.spec.ts",
+          "line": 3,
+          "column": 6,
+          "specs": [
+            {
+              "title": "service worker responds to PING",
+              "ok": false,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": -1,
+                      "parallelIndex": -1,
+                      "status": "failed",
+                      "duration": 0,
+                      "error": {
+                        "message": "Error: worker process exited unexpectedly (code=3221225794, signal=null)"
+                      },
+                      "errors": [
+                        {
+                          "message": "Error: worker process exited unexpectedly (code=3221225794, signal=null)"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-04-16T15:24:54.473Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "107d361b6fc8beba4b6c-e7ad04fca8a2c943177f",
+              "file": "messaging.spec.ts",
+              "line": 4,
+              "column": 3
+            },
+            {
+              "title": "service worker is accessible",
+              "ok": false,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": -1,
+                      "parallelIndex": -1,
+                      "status": "failed",
+                      "duration": 0,
+                      "error": {
+                        "message": "Error: worker process exited unexpectedly (code=3221225794, signal=null)"
+                      },
+                      "errors": [
+                        {
+                          "message": "Error: worker process exited unexpectedly (code=3221225794, signal=null)"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-04-16T15:24:54.489Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "107d361b6fc8beba4b6c-b51495a37ad239faecc5",
+              "file": "messaging.spec.ts",
+              "line": 14,
+              "column": 3
+            },
+            {
+              "title": "extension has valid ID",
+              "ok": false,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": -1,
+                      "parallelIndex": -1,
+                      "status": "failed",
+                      "duration": 0,
+                      "error": {
+                        "message": "Error: worker process exited unexpectedly (code=3221225794, signal=null)"
+                      },
+                      "errors": [
+                        {
+                          "message": "Error: worker process exited unexpectedly (code=3221225794, signal=null)"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-04-16T15:24:54.595Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "107d361b6fc8beba4b6c-6f1db1d1685d78750eb2",
+              "file": "messaging.spec.ts",
+              "line": 19,
+              "column": 3
+            },
+            {
+              "title": "sidepanel page loads via extension URL",
+              "ok": false,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": -1,
+                      "parallelIndex": -1,
+                      "status": "failed",
+                      "duration": 0,
+                      "error": {
+                        "message": "Error: worker process exited unexpectedly (code=3221225794, signal=null)"
+                      },
+                      "errors": [
+                        {
+                          "message": "Error: worker process exited unexpectedly (code=3221225794, signal=null)"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-04-16T15:24:54.599Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "107d361b6fc8beba4b6c-38bd607d968f3e73c4cf",
+              "file": "messaging.spec.ts",
+              "line": 24,
+              "column": 3
+            },
+            {
+              "title": "popup page exists",
+              "ok": false,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": -1,
+                      "parallelIndex": -1,
+                      "status": "failed",
+                      "duration": 0,
+                      "error": {
+                        "message": "Error: worker process exited unexpectedly (code=3221225794, signal=null)"
+                      },
+                      "errors": [
+                        {
+                          "message": "Error: worker process exited unexpectedly (code=3221225794, signal=null)"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-04-16T15:24:54.796Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "107d361b6fc8beba4b6c-27bab54e5b2495684614",
+              "file": "messaging.spec.ts",
+              "line": 31,
+              "column": 3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "provider.spec.ts",
+      "file": "provider.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "Provider Switching",
+          "file": "provider.spec.ts",
+          "line": 3,
+          "column": 6,
+          "specs": [
+            {
+              "title": "provider menu opens on click",
+              "ok": false,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": -1,
+                      "parallelIndex": -1,
+                      "status": "failed",
+                      "duration": 0,
+                      "error": {
+                        "message": "Error: worker process exited unexpectedly (code=3221225794, signal=null)"
+                      },
+                      "errors": [
+                        {
+                          "message": "Error: worker process exited unexpectedly (code=3221225794, signal=null)"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-04-16T15:24:54.662Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "b6ba6e4970f94cd1ab25-e948d31f1e9190329807",
+              "file": "provider.spec.ts",
+              "line": 8,
+              "column": 3
+            },
+            {
+              "title": "provider menu shows all providers",
+              "ok": false,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": -1,
+                      "parallelIndex": -1,
+                      "status": "failed",
+                      "duration": 0,
+                      "error": {
+                        "message": "Error: worker process exited unexpectedly (code=3221225794, signal=null)"
+                      },
+                      "errors": [
+                        {
+                          "message": "Error: worker process exited unexpectedly (code=3221225794, signal=null)"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-04-16T15:24:54.667Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "b6ba6e4970f94cd1ab25-71f02abeb619e2de6825",
+              "file": "provider.spec.ts",
+              "line": 16,
+              "column": 3
+            },
+            {
+              "title": "clicking provider switches and shows toast",
+              "ok": false,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": -1,
+                      "parallelIndex": -1,
+                      "status": "failed",
+                      "duration": 0,
+                      "error": {
+                        "message": "Error: worker process exited unexpectedly (code=3221225794, signal=null)"
+                      },
+                      "errors": [
+                        {
+                          "message": "Error: worker process exited unexpectedly (code=3221225794, signal=null)"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-04-16T15:24:54.734Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "b6ba6e4970f94cd1ab25-375e7ae016c67a5fe6c3",
+              "file": "provider.spec.ts",
+              "line": 26,
+              "column": 3
+            },
+            {
+              "title": "clicking outside closes menu",
+              "ok": false,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": -1,
+                      "parallelIndex": -1,
+                      "status": "failed",
+                      "duration": 0,
+                      "error": {
+                        "message": "Error: worker process exited unexpectedly (code=3221225794, signal=null)"
+                      },
+                      "errors": [
+                        {
+                          "message": "Error: worker process exited unexpectedly (code=3221225794, signal=null)"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-04-16T15:24:54.738Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "b6ba6e4970f94cd1ab25-c90c8fe61034e3d2ec8b",
+              "file": "provider.spec.ts",
+              "line": 38,
+              "column": 3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "rendering.spec.ts",
+      "file": "rendering.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "SidePanel Rendering",
+          "file": "rendering.spec.ts",
+          "line": 3,
+          "column": 6,
+          "specs": [
+            {
+              "title": "sidepanel container renders",
+              "ok": false,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": -1,
+                      "parallelIndex": -1,
+                      "status": "failed",
+                      "duration": 0,
+                      "error": {
+                        "message": "Error: worker process exited unexpectedly (code=3221225794, signal=null)"
+                      },
+                      "errors": [
+                        {
+                          "message": "Error: worker process exited unexpectedly (code=3221225794, signal=null)"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-04-16T15:24:54.839Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "f672df31acb714c8c296-5ce5ae014c7e44740ced",
+              "file": "rendering.spec.ts",
+              "line": 8,
+              "column": 3
+            },
+            {
+              "title": "header shows VIVIM brand",
+              "ok": false,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": -1,
+                      "parallelIndex": -1,
+                      "status": "failed",
+                      "duration": 0,
+                      "error": {
+                        "message": "Error: worker process exited unexpectedly (code=3221225794, signal=null)"
+                      },
+                      "errors": [
+                        {
+                          "message": "Error: worker process exited unexpectedly (code=3221225794, signal=null)"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-04-16T15:24:54.808Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "f672df31acb714c8c296-0a80763d34590dfcdb6e",
+              "file": "rendering.spec.ts",
+              "line": 12,
+              "column": 3
+            },
+            {
+              "title": "status dot is visible",
+              "ok": false,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": -1,
+                      "parallelIndex": -1,
+                      "status": "failed",
+                      "duration": 0,
+                      "error": {
+                        "message": "Error: worker process exited unexpectedly (code=3221225794, signal=null)"
+                      },
+                      "errors": [
+                        {
+                          "message": "Error: worker process exited unexpectedly (code=3221225794, signal=null)"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-04-16T15:24:54.914Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "f672df31acb714c8c296-dc44e9442169bf5b3de8",
+              "file": "rendering.spec.ts",
+              "line": 18,
+              "column": 3
+            },
+            {
+              "title": "empty state shows when no messages",
+              "ok": false,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": -1,
+                      "parallelIndex": -1,
+                      "status": "failed",
+                      "duration": 0,
+                      "error": {
+                        "message": "Error: worker process exited unexpectedly (code=3221225794, signal=null)"
+                      },
+                      "errors": [
+                        {
+                          "message": "Error: worker process exited unexpectedly (code=3221225794, signal=null)"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-04-16T15:24:54.842Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "f672df31acb714c8c296-e27102b4c5e7e54dea13",
+              "file": "rendering.spec.ts",
+              "line": 22,
+              "column": 3
+            },
+            {
+              "title": "input textarea is visible",
+              "ok": false,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": -1,
+                      "parallelIndex": -1,
+                      "status": "failed",
+                      "duration": 0,
+                      "error": {
+                        "message": "Error: worker process exited unexpectedly (code=3221225794, signal=null)"
+                      },
+                      "errors": [
+                        {
+                          "message": "Error: worker process exited unexpectedly (code=3221225794, signal=null)"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-04-16T15:24:54.966Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "f672df31acb714c8c296-edc27862b50269e61d0d",
+              "file": "rendering.spec.ts",
+              "line": 28,
+              "column": 3
+            },
+            {
+              "title": "send button is visible",
+              "ok": false,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": -1,
+                      "parallelIndex": -1,
+                      "status": "failed",
+                      "duration": 0,
+                      "error": {
+                        "message": "Error: worker process exited unexpectedly (code=3221225794, signal=null)"
+                      },
+                      "errors": [
+                        {
+                          "message": "Error: worker process exited unexpectedly (code=3221225794, signal=null)"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-04-16T15:24:54.931Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "f672df31acb714c8c296-5cb20fd415945a919d29",
+              "file": "rendering.spec.ts",
+              "line": 32,
+              "column": 3
+            },
+            {
+              "title": "provider shows ChatGPT by default",
+              "ok": false,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": -1,
+                      "parallelIndex": -1,
+                      "status": "failed",
+                      "duration": 0,
+                      "error": {
+                        "message": "Error: worker process exited unexpectedly (code=3221225794, signal=null)"
+                      },
+                      "errors": [
+                        {
+                          "message": "Error: worker process exited unexpectedly (code=3221225794, signal=null)"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-04-16T15:24:54.997Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "f672df31acb714c8c296-ecd0c81b809b653ed204",
+              "file": "rendering.spec.ts",
+              "line": 36,
+              "column": 3
+            },
+            {
+              "title": "status bar shows message count",
+              "ok": false,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": -1,
+                      "parallelIndex": -1,
+                      "status": "failed",
+                      "duration": 0,
+                      "error": {
+                        "message": "Error: worker process exited unexpectedly (code=3221225794, signal=null)"
+                      },
+                      "errors": [
+                        {
+                          "message": "Error: worker process exited unexpectedly (code=3221225794, signal=null)"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-04-16T15:24:54.969Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "f672df31acb714c8c296-ba55add089a4a930f8f8",
+              "file": "rendering.spec.ts",
+              "line": 41,
+              "column": 3
+            },
+            {
+              "title": "newChat button is visible in header",
+              "ok": false,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": -1,
+                      "parallelIndex": -1,
+                      "status": "failed",
+                      "duration": 0,
+                      "error": {
+                        "message": "Error: worker process exited unexpectedly (code=3221225794, signal=null)"
+                      },
+                      "errors": [
+                        {
+                          "message": "Error: worker process exited unexpectedly (code=3221225794, signal=null)"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-04-16T15:24:55.043Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "f672df31acb714c8c296-cafbf671d72292bd6906",
+              "file": "rendering.spec.ts",
+              "line": 46,
+              "column": 3
+            },
+            {
+              "title": "history button is visible in header",
+              "ok": false,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": -1,
+                      "parallelIndex": -1,
+                      "status": "failed",
+                      "duration": 0,
+                      "error": {
+                        "message": "Error: worker process exited unexpectedly (code=3221225794, signal=null)"
+                      },
+                      "errors": [
+                        {
+                          "message": "Error: worker process exited unexpectedly (code=3221225794, signal=null)"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-04-16T15:24:55.000Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "f672df31acb714c8c296-3bed05c39cc6f5b704c3",
+              "file": "rendering.spec.ts",
+              "line": 50,
+              "column": 3
+            },
+            {
+              "title": "provider select button is visible in header",
+              "ok": false,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": -1,
+                      "parallelIndex": -1,
+                      "status": "failed",
+                      "duration": 0,
+                      "error": {
+                        "message": "Error: worker process exited unexpectedly (code=3221225794, signal=null)"
+                      },
+                      "errors": [
+                        {
+                          "message": "Error: worker process exited unexpectedly (code=3221225794, signal=null)"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-04-16T15:24:55.081Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "f672df31acb714c8c296-5c3f2013e4f92acdde89",
+              "file": "rendering.spec.ts",
+              "line": 54,
+              "column": 3
+            },
+            {
+              "title": "export button is visible in header",
+              "ok": false,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": -1,
+                      "parallelIndex": -1,
+                      "status": "failed",
+                      "duration": 0,
+                      "error": {
+                        "message": "Error: worker process exited unexpectedly (code=3221225794, signal=null)"
+                      },
+                      "errors": [
+                        {
+                          "message": "Error: worker process exited unexpectedly (code=3221225794, signal=null)"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-04-16T15:24:55.047Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "f672df31acb714c8c296-1632ecf9e5dbfe6c742a",
+              "file": "rendering.spec.ts",
+              "line": 58,
+              "column": 3
+            },
+            {
+              "title": "reload button is visible in status bar",
+              "ok": false,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": -1,
+                      "parallelIndex": -1,
+                      "status": "failed",
+                      "duration": 0,
+                      "error": {
+                        "message": "Error: worker process exited unexpectedly (code=3221225794, signal=null)"
+                      },
+                      "errors": [
+                        {
+                          "message": "Error: worker process exited unexpectedly (code=3221225794, signal=null)"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-04-16T15:24:55.131Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "f672df31acb714c8c296-caec1b709ed4c084dfef",
+              "file": "rendering.spec.ts",
+              "line": 62,
+              "column": 3
+            },
+            {
+              "title": "clear button is visible in status bar",
+              "ok": false,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": -1,
+                      "parallelIndex": -1,
+                      "status": "failed",
+                      "duration": 0,
+                      "error": {
+                        "message": "Error: worker process exited unexpectedly (code=3221225794, signal=null)"
+                      },
+                      "errors": [
+                        {
+                          "message": "Error: worker process exited unexpectedly (code=3221225794, signal=null)"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-04-16T15:24:55.085Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "f672df31acb714c8c296-df4c1b22c6e2bf2909cd",
+              "file": "rendering.spec.ts",
+              "line": 66,
+              "column": 3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "search.spec.ts",
+      "file": "search.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "Search Functionality",
+          "file": "search.spec.ts",
+          "line": 3,
+          "column": 6,
+          "specs": [
+            {
+              "title": "search input is visible",
+              "ok": false,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": -1,
+                      "parallelIndex": -1,
+                      "status": "failed",
+                      "duration": 0,
+                      "error": {
+                        "message": "Error: worker process exited unexpectedly (code=3221225794, signal=null)"
+                      },
+                      "errors": [
+                        {
+                          "message": "Error: worker process exited unexpectedly (code=3221225794, signal=null)"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-04-16T15:24:55.135Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "a088064de9fe351eef5f-507af8952fe51cdf9f70",
+              "file": "search.spec.ts",
+              "line": 8,
+              "column": 3
+            },
+            {
+              "title": "search input accepts text",
+              "ok": false,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": -1,
+                      "parallelIndex": -1,
+                      "status": "failed",
+                      "duration": 0,
+                      "error": {
+                        "message": "Error: worker process exited unexpectedly (code=3221225794, signal=null)"
+                      },
+                      "errors": [
+                        {
+                          "message": "Error: worker process exited unexpectedly (code=3221225794, signal=null)"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-04-16T15:24:55.136Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "a088064de9fe351eef5f-2bff8cf131430c936c0e",
+              "file": "search.spec.ts",
+              "line": 12,
+              "column": 3
+            },
+            {
+              "title": "search shows no matches when empty",
+              "ok": false,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": -1,
+                      "parallelIndex": -1,
+                      "status": "failed",
+                      "duration": 0,
+                      "error": {
+                        "message": "Error: worker process exited unexpectedly (code=3221225794, signal=null)"
+                      },
+                      "errors": [
+                        {
+                          "message": "Error: worker process exited unexpectedly (code=3221225794, signal=null)"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-04-16T15:24:55.159Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "a088064de9fe351eef5f-da43e55d73dbaca439b5",
+              "file": "search.spec.ts",
+              "line": 18,
+              "column": 3
+            },
+            {
+              "title": "search clears on clear button click",
+              "ok": false,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": -1,
+                      "parallelIndex": -1,
+                      "status": "failed",
+                      "duration": 0,
+                      "error": {
+                        "message": "Error: worker process exited unexpectedly (code=3221225794, signal=null)"
+                      },
+                      "errors": [
+                        {
+                          "message": "Error: worker process exited unexpectedly (code=3221225794, signal=null)"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-04-16T15:24:55.183Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "a088064de9fe351eef5f-2de2c20ebf3581547494",
+              "file": "search.spec.ts",
+              "line": 26,
+              "column": 3
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-04-16T15:23:02.715Z",
+    "duration": 117420.428,
+    "expected": 0,
+    "skipped": 0,
+    "unexpected": 35,
+    "flaky": 0
+  }
+}

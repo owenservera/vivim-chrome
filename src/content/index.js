@@ -1,8 +1,16 @@
+import { StorageManager } from '../core/storage/StorageManager.js';
+import { ContentScriptFetch } from './fetch/ContentScriptFetch.js';
+import { stealthFetchManager } from './fetch/StealthFetchManager.js';
+
 (function init() {
   if (window.__vivimContentInitialized) return;
   window.__vivimContentInitialized = true;
 
   console.log('[Content] Initializing modular content script...');
+
+  // Initialize and expose storageManager on window for providers
+  window.storageManager = new StorageManager(chrome.storage.local);
+  console.log('[Content] StorageManager initialized on window');
 
   window.__vivimTelemetry = {
     track: function() {
@@ -26,6 +34,7 @@
 
   setupWebBridge();
   setupSaveButtonInjection();
+  setupContentScriptFetch();
 
   window.__vivimTelemetry.trackAction('content_loaded');
   console.log('[Content] Initialization complete');
@@ -50,9 +59,10 @@ function setupWebBridge() {
       console.log('[Content] Responding to handshake');
       window.postMessage({
         type: 'vivim-bridge',
-        communicationId: 'vivim-content',
-        action: '__handshake__',
+        communicationId: 'vivim-bridge',
         requestId: data.id,
+        success: true,
+        data: { success: true, timestamp: Date.now() },
         timestamp: Date.now()
       }, '*');
       return;
@@ -145,5 +155,17 @@ function injectSaveButton(container) {
     container.appendChild(btn);
   } catch (e) {
     console.warn('[Content] Injection failed:', e);
+  }
+}
+
+function setupContentScriptFetch() {
+  console.log('[Content] Initializing content script fetch...');
+
+  try {
+    const contentScriptFetch = new ContentScriptFetch();
+    contentScriptFetch.init();
+    console.log('[Content] Content script fetch initialized');
+  } catch (error) {
+    console.error('[Content] Failed to initialize content script fetch:', error);
   }
 }

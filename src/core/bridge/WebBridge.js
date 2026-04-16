@@ -35,6 +35,9 @@ export class WebBridge {
       ...options,
     };
 
+    // Bind handleMessage to preserve 'this' context
+    this.handleMessage = this.handleMessage.bind(this);
+    
     this.setupMessageListener();
     this.setupHandshakeHandler();
     this.startHealthCheck();
@@ -176,7 +179,8 @@ export class WebBridge {
     }
     
     const expectedId = this.config.selfId;
-    if (event.data?.communicationId !== expectedId) {
+    const targetId = this.config.contentId;
+    if (event.data?.communicationId !== expectedId && event.data?.communicationId !== targetId) {
       return;
     }
     

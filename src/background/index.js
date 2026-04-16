@@ -16,7 +16,14 @@ messageBus.logger = logger.child('MessageBus');
 
 // Add message validation middleware
 messageBus.use(async (message) => {
-  MessageValidator.validateMessage(message);
+  try {
+    const result = MessageValidator.validateMessage(message);
+    if (!result.valid && result.errors.length > 0) {
+      logger.warn('Message validation failed:', result.errors);
+    }
+  } catch (error) {
+    logger.warn('Message validation error:', error.message);
+  }
   return message;
 });
 
@@ -35,6 +42,15 @@ services.set('conversationManager', conversationManager);
 services.set('destinationManager', destinationManager);
 
 // Handle incoming messages from content scripts and UI
+const ASYNC_RESPONSE_TYPES = new Set([
+  'GET_CONVERSATION',
+  'GET_CONVERSATION_HISTORY',
+  'SAVE_FROM_DOM',
+  'CLEAR_CONVERSATION',
+  'START_NEW_CONVERSATION',
+  'PING'
+]);
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   logger.debug('Received message:', message.type, message);
 
@@ -67,7 +83,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
     });
 
-  return message.needsResponse || false;
+  return ASYNC_RESPONSE_TYPES.has(message.type);
 });
 
 // Side panel setup

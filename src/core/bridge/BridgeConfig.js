@@ -22,7 +22,7 @@ const DEFAULT_CONFIG = {
   // Message timeouts (milliseconds)
   timeouts: {
     // How long to wait for handshake response
-    handshake: 500,
+    handshake: 3000,
     
     // How long to wait for message response
     request: 30000,

@@ -65,23 +65,25 @@ export class ConversationStorage {
    * @param {boolean} isTemp - Whether it's a temporary conversation
    */
   async storeConversation(conversationId, messages, isTemp = false) {
-    const key = this.getConversationKey(conversationId, isTemp);
-    if (!key) return;
+    try {
+      const key = this.getConversationKey(conversationId, isTemp);
+      if (!key) return;
 
-    // Ensure messages have required fields
-    const validatedMessages = messages.map(msg => ({
-      role: msg.role,
-      content: msg.content,
-      timestamp: msg.timestamp || Date.now(),
-      model: msg.model,
-      streamed: msg.streamed || false,
-      conversationId: msg.conversationId
-    }));
+      const validatedMessages = messages.map(msg => ({
+        role: msg.role,
+        content: msg.content,
+        timestamp: msg.timestamp || Date.now(),
+        model: msg.model,
+        streamed: msg.streamed || false,
+        conversationId: msg.conversationId
+      }));
 
-    // Keep only last 100 messages to prevent unbounded growth
-    const trimmedMessages = validatedMessages.slice(-100);
+      const trimmedMessages = validatedMessages.slice(-100);
 
-    await this.storage.set(key, trimmedMessages);
+      await this.storage.set(key, trimmedMessages);
+    } catch (error) {
+      console.error('[ConversationStorage] storeConversation failed:', error);
+    }
   }
 
   /**
@@ -91,11 +93,16 @@ export class ConversationStorage {
    * @returns {Promise<Array>} Message array
    */
   async getConversation(conversationId, isTemp = false) {
-    const key = this.getConversationKey(conversationId, isTemp);
-    if (!key) return [];
+    try {
+      const key = this.getConversationKey(conversationId, isTemp);
+      if (!key) return [];
 
-    const messages = await this.storage.get(key);
-    return messages || [];
+      const messages = await this.storage.get(key);
+      return messages || [];
+    } catch (error) {
+      console.error('[ConversationStorage] getConversation failed:', error);
+      return [];
+    }
   }
 
   /**
@@ -105,22 +112,26 @@ export class ConversationStorage {
    * @param {boolean} isTemp - Whether it's a temporary conversation
    */
   async addMessage(conversationId, message, isTemp = false) {
-    const existingMessages = await this.getConversation(conversationId, isTemp);
+    try {
+      const existingMessages = await this.getConversation(conversationId, isTemp);
 
-    const isDuplicate = existingMessages.some(msg =>
-      msg.content === message.content &&
-      msg.role === message.role &&
-      Math.abs((msg.timestamp || 0) - (message.timestamp || 0)) < 1000
-    );
+      const isDuplicate = existingMessages.some(msg =>
+        msg.content === message.content &&
+        msg.role === message.role &&
+        Math.abs((msg.timestamp || 0) - (message.timestamp || 0)) < 1000
+      );
 
-    if (!isDuplicate) {
-      existingMessages.push({
-        ...message,
-        timestamp: message.timestamp || Date.now()
-      });
+      if (!isDuplicate) {
+        existingMessages.push({
+          ...message,
+          timestamp: message.timestamp || Date.now()
+        });
 
-      await this.storeConversation(conversationId, existingMessages, isTemp);
-      this.indexConversation(conversationId, existingMessages);
+        await this.storeConversation(conversationId, existingMessages, isTemp);
+        this.indexConversation(conversationId, existingMessages);
+      }
+    } catch (error) {
+      console.error('[ConversationStorage] addMessage failed:', error);
     }
   }
 

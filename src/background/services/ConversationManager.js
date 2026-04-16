@@ -11,6 +11,7 @@ export class ConversationManager {
     this.messageBus = messageBus;
     this.storage = new ConversationStorage(new StorageManager());
     this.streamingMessages = new Map();
+    this.tabProviders = new Map(); // Track provider per tab
     this.logger = new Logger('ConversationManager');
     this.destinationManager = null;
 
@@ -34,6 +35,8 @@ export class ConversationManager {
     this.messageBus.on(MessageTypes.GET_CONVERSATION_HISTORY, this.handleGetConversationHistory.bind(this));
     this.messageBus.on(MessageTypes.LOAD_CONVERSATION_FROM_DOM, this.handleLoadConversationFromDOM.bind(this));
     this.messageBus.on(MessageTypes.LOAD_CONVERSATION, this.handleLoadConversation.bind(this));
+    this.messageBus.on(MessageTypes.PROVIDER_CHANGED, this.handleProviderChanged.bind(this));
+    this.messageBus.on(MessageTypes.SAVE_FROM_DOM, this.handleSaveFromDOM.bind(this));
   }
 
   /**
@@ -45,6 +48,59 @@ export class ConversationManager {
     } else {
       // Fallback
       chrome.runtime.sendMessage(message).catch(() => {});
+    }
+  }
+
+  /**
+   * Handle provider change messages
+   */
+  async handleProviderChanged(message, sender) {
+    try {
+      const tabId = message.tabId || sender?.tab?.id;
+      const providerId = message.providerId;
+
+      this.logger.info(`Provider changed for tab ${tabId}: ${providerId}`);
+      this.tabProviders.set(tabId, providerId);
+
+    } catch (error) {
+      this.logger.error('Error handling provider change:', error);
+    }
+  }
+
+  /**
+   * Handle save from DOM messages
+   */
+  async handleSaveFromDOM(message, sender, sendResponse) {
+    try {
+      const tabId = message.tabId || sender?.tab?.id;
+      const content = message.content;
+
+      this.logger.info(`SAVE_FROM_DOM received from tab ${tabId}`);
+
+      if (!content) {
+        if (sendResponse) sendResponse({ ok: false, error: 'No content' });
+        return;
+      }
+
+      await this.storeMessage(tabId, {
+        role: 'assistant',
+        content: content,
+        conversationId: null,
+        timestamp: message.timestamp || Date.now()
+      });
+
+      this.broadcastToUI({
+        type: MessageTypes.MESSAGE_ADDED,
+        role: 'assistant',
+        content: content,
+        timestamp: message.timestamp || Date.now(),
+        tabId
+      });
+
+      if (sendResponse) sendResponse({ ok: true });
+    } catch (error) {
+      this.logger.error('Error handling save from DOM:', error);
+      if (sendResponse) sendResponse({ ok: false, error: error.message });
     }
   }
 
@@ -250,21 +306,20 @@ export class ConversationManager {
         };
         this.streamingMessages.set(key, existing);
       } else {
-        if (seq > existing.lastSeq) {
-          existing.content = message.content;
-          existing.lastSeq = seq;
-          if (message.model) existing.model = message.model;
-          if (message.isFinal) {
-            existing.isFinal = true;
-            const finalized = {
-              role: "assistant",
-              content: existing.content,
-              model: existing.model,
-              timestamp: existing.startTime,
-              streamed: true
-            };
-            await this.storeMessage(tabId, finalized);
-          }
+        // FIX: Sequence validation - skip out-of-order chunks
+        if (seq <= existing.lastSeq) {
+          this.logger.debug(`Out-of-order chunk: seq=${seq}, lastSeq=${existing.lastSeq}, skipping`);
+          return;
+        }
+
+        // FIX: Append content instead of replacing (for partial chunks)
+        existing.content = message.content;
+        existing.lastSeq = seq;
+        if (message.model) existing.model = message.model;
+        
+        // FIX: Don't store on isFinal here - wait for STREAM_COMPLETE to avoid double storage
+        if (message.isFinal) {
+          existing.isFinal = true;
         }
       }
 
@@ -309,20 +364,24 @@ export class ConversationManager {
   }
 
   getConversationKey(tabId, conversationId) {
-    return conversationId || `temp_${tabId}`;
+    const providerId = this.tabProviders.get(tabId) || 'chatgpt';
+    return conversationId || `temp_${tabId}_${providerId}`;
   }
 
   async getConversationForTab(tabId) {
-    const messages = await this.storage.getConversation(`temp_${tabId}`, true);
+    const providerId = this.tabProviders.get(tabId) || 'chatgpt';
+    const messages = await this.storage.getConversation(`temp_${tabId}_${providerId}`, true);
     return {
       messages,
       conversationId: null,
-      url: null
+      url: null,
+      providerId
     };
   }
 
   async clearConversationForTab(tabId) {
-    await this.storage.clearConversation(`temp_${tabId}`, true);
+    const providerId = this.tabProviders.get(tabId) || 'chatgpt';
+    await this.storage.clearConversation(`temp_${tabId}_${providerId}`, true);
     this.streamingMessages.delete("stream_" + tabId);
   }
 

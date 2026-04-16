@@ -5,11 +5,19 @@
   "type": "module",
   "scripts": {
     "build": "node build.mjs",
-    "dev": "node build.mjs --watch",
-    "clean": "rm -rf dist",
-    "test": "node test.mjs"
+    "build:fast": "node build.mjs --no-test",
+    "dev": "node dev.mjs --watch",
+    "dev:test": "node dev.mjs --watch --test",
+    "dev:debug": "node dev.mjs --watch --debug",
+    "test": "node test/runner.mjs",
+    "test:dev": "node dev.mjs --test",
+    "test:e2e": "playwright test",
+    "test:e2e:headed": "playwright test --headed",
+    "test:e2e:ui": "playwright test --ui",
+    "clean": "rm -rf dist"
   },
   "devDependencies": {
-    "esbuild": "^0.20.0"
+    "esbuild": "^0.20.0",
+    "@playwright/test": "^1.50.0"
   }
 }

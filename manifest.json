@@ -17,7 +17,9 @@
   ],
   "host_permissions": [
     "https://chatgpt.com/*",
-    "https://chat.com/*"
+    "https://chat.com/*",
+    "https://claude.ai/*",
+    "https://gemini.google.com/*"
   ],
   "action": {
     "default_title": "VIVIM POC"
@@ -31,13 +33,13 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://chatgpt.com/*", "https://chat.com/*"],
+      "matches": ["https://chatgpt.com/*", "https://chat.com/*", "https://claude.ai/*", "https://gemini.google.com/*"],
       "run_at": "document_start",
       "js": ["dist/providers/index.js"],
       "world": "MAIN"
     },
     {
-      "matches": ["https://chatgpt.com/*", "https://chat.com/*"],
+      "matches": ["https://chatgpt.com/*", "https://chat.com/*", "https://claude.ai/*", "https://gemini.google.com/*"],
       "run_at": "document_start",
       "js": ["dist/content/index.js"]
     }
@@ -45,7 +47,7 @@
   "web_accessible_resources": [
     {
       "resources": ["dist/**/*.js"],
-      "matches": ["https://chatgpt.com/*", "https://chat.com/*"]
+      "matches": ["https://chatgpt.com/*", "https://chat.com/*", "https://claude.ai/*", "https://gemini.google.com/*"]
     }
   ]
 }

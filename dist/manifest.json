@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "VIVIM POC — ChatGPT Mirror",
-  "description": "Mirror ChatGPT conversations in VIVIM side panel",
-  "version": "0.0.1",
+  "name": "VIVIM Extension v2.0",
+  "description": "Local-first, privacy-focused AI assistant",
+  "version": "2.0.0",
   "icons": {
     "16": "icons/icon-16.png",
     "32": "icons/icon-32.png",
@@ -17,7 +17,9 @@
   ],
   "host_permissions": [
     "https://chatgpt.com/*",
-    "https://chat.com/*"
+    "https://chat.com/*",
+    "https://claude.ai/*",
+    "https://gemini.google.com/*"
   ],
   "action": {
     "default_title": "VIVIM POC"
@@ -26,26 +28,47 @@
     "default_path": "sidepanel.html"
   },
   "background": {
-    "service_worker": "dist/background.js",
+    "service_worker": "background.js",
     "type": "module"
   },
   "content_scripts": [
     {
-      "matches": ["https://chatgpt.com/*", "https://chat.com/*"],
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://chat.com/*",
+        "https://claude.ai/*",
+        "https://gemini.google.com/*"
+      ],
       "run_at": "document_start",
-      "js": ["dist/providers/index.js"],
+      "js": [
+        "providers/index.js"
+      ],
       "world": "MAIN"
     },
     {
-      "matches": ["https://chatgpt.com/*", "https://chat.com/*"],
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://chat.com/*",
+        "https://claude.ai/*",
+        "https://gemini.google.com/*"
+      ],
       "run_at": "document_start",
-      "js": ["dist/content/index.js"]
+      "js": [
+        "content/index.js"
+      ]
     }
   ],
   "web_accessible_resources": [
     {
-      "resources": ["dist/**/*.js"],
-      "matches": ["https://chatgpt.com/*", "https://chat.com/*"]
+      "resources": [
+        "**/*.js"
+      ],
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://chat.com/*",
+        "https://claude.ai/*",
+        "https://gemini.google.com/*"
+      ]
     }
   ]
 }

@@ -1,6 +1,9 @@
 import { ProviderRegistry } from '../core/providers/ProviderRegistry.js';
 import { ChatGPTProvider } from './chatgpt/ChatGPTProvider.js';
+import { ClaudeProvider } from './claude/ClaudeProvider.js';
+import { GeminiProvider } from './gemini/GeminiProvider.js';
 import { createWebBridge } from '../core/bridge/index.js';
+import { stealthFetchManager } from '../content/fetch/StealthFetchManager.js';
 
 const bridge = createWebBridge({
   selfId: 'vivim-bridge',
@@ -9,9 +12,40 @@ const bridge = createWebBridge({
 });
 
 const providerRegistry = new ProviderRegistry();
+
+// Initialize providers
 const chatGPTProvider = new ChatGPTProvider();
 chatGPTProvider.setBridge(bridge);
 providerRegistry.register(chatGPTProvider);
+
+// Register with stealth fetch manager
+stealthFetchManager.registerProvider(chatGPTProvider.id, {
+  preferContentScript: chatGPTProvider.stealthConfig.preferContentScript,
+  contentScriptHosts: chatGPTProvider.stealthConfig.contentScriptHosts,
+  fallbackToBackground: true
+});
+
+const claudeProvider = new ClaudeProvider();
+claudeProvider.setBridge(bridge);
+providerRegistry.register(claudeProvider);
+
+// Register with stealth fetch manager
+stealthFetchManager.registerProvider(claudeProvider.id, {
+  preferContentScript: claudeProvider.stealthConfig.preferContentScript,
+  contentScriptHosts: claudeProvider.stealthConfig.contentScriptHosts,
+  fallbackToBackground: true
+});
+
+const geminiProvider = new GeminiProvider();
+geminiProvider.setBridge(bridge);
+providerRegistry.register(geminiProvider);
+
+// Register with stealth fetch manager
+stealthFetchManager.registerProvider(geminiProvider.id, {
+  preferContentScript: geminiProvider.stealthConfig.preferContentScript,
+  contentScriptHosts: geminiProvider.stealthConfig.contentScriptHosts,
+  fallbackToBackground: true
+});
 
 function setupInterception() {
   const originalFetch = window.fetch;
@@ -19,26 +53,29 @@ function setupInterception() {
     const [url, options] = args;
     const reqUrl = typeof url === 'string' ? url : url?.url;
     const method = options?.method || 'GET';
-    
-    const isConversationAPI = reqUrl && method === 'POST' && 
-      (reqUrl.includes('/backend-api/conversation') || reqUrl.includes('/backend-api/v/conversation'));
-    
-    if (!isConversationAPI) {
-      return originalFetch.apply(this, args);
-    }
-    
-    console.log('[Providers] Match! Intercepting ChatGPT conversation request');
-    
-    try {
-      chatGPTProvider.onRequest({
-        url: reqUrl,
-        method: method,
-        headers: options?.headers || {},
-        body: options?.body,
-        init: options
-      });
-    } catch (error) {
-      console.warn('[Providers] Error in provider onRequest:', error);
+
+    // Find provider that matches this request
+    const requestProvider = providerRegistry.findProviderByRequest({
+      url: reqUrl,
+      method: method,
+      headers: options?.headers || {},
+      body: options?.body
+    });
+
+    if (requestProvider) {
+      console.log(`[Providers] Match! Intercepting ${requestProvider.id} request:`, reqUrl);
+
+      try {
+        requestProvider.onRequest({
+          url: reqUrl,
+          method: method,
+          headers: options?.headers || {},
+          body: options?.body,
+          init: options
+        });
+      } catch (error) {
+        console.warn(`[Providers] Error in ${requestProvider.id} provider onRequest:`, error);
+      }
     }
 
     let response = await originalFetch.apply(this, args);
@@ -59,7 +96,7 @@ function setupInterception() {
             clone: () => clonedResponse.clone()
           });
         } catch (error) {
-          console.warn('[Providers] Error in provider onResponse:', error);
+          console.warn(`[Providers] Error in ${responseProvider.id} provider onResponse:`, error);
         }
       }, 0);
     }
@@ -131,3 +168,4 @@ function init() {
 init();
 
 window.VIVIM_PROVIDER_REGISTRY = providerRegistry;
+window.stealthFetchManager = stealthFetchManager;

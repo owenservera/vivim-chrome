@@ -8,6 +8,11 @@ export class SidePanelController {
   constructor() {
     this.currentTabId = null;
     this.currentProvider = { id: 'chatgpt', name: 'ChatGPT', color: '#10A37F' };
+    this.availableProviders = [
+      { id: 'chatgpt', name: 'ChatGPT', color: '#10A37F' },
+      { id: 'claude', name: 'Claude', color: '#8B5CF6' },
+      { id: 'gemini', name: 'Gemini', color: '#F59E0B' }
+    ];
     this.messageList = [];
     this.streamingMessage = null;
     this.logger = console;
@@ -22,10 +27,14 @@ export class SidePanelController {
     this.sendBtn = document.getElementById('sendBtn');
     this.statusDot = document.getElementById('statusDot');
     this.statusText = document.getElementById('statusText');
+    this.providerSelect = document.getElementById('providerSelect');
+    this.providerName = document.getElementById('providerName');
+    this.providerDot = document.getElementById('providerDot');
 
     this.bindEvents();
     this.initializeWithCurrentTab();
     this.updateConnectionStatus('connecting');
+    this.updateProviderDisplay();
   }
 
   updateConnectionStatus(status) {
@@ -51,6 +60,7 @@ export class SidePanelController {
   }
 
   bindEvents() {
+    // Input events
     if (this.promptInput) {
       this.promptInput.addEventListener('input', () => this.onInputChange());
       this.promptInput.addEventListener('keydown', (e) => this.onInputKeyDown(e));
@@ -60,30 +70,79 @@ export class SidePanelController {
       this.sendBtn.addEventListener('click', () => this.sendPrompt());
     }
 
-    // Tab switching
-    chrome.tabs.onActivated.addListener((activeInfo) => {
-      this.currentTabId = activeInfo.tabId;
-      this.loadConversation();
-    });
+    if (this.providerSelect) {
+      this.providerSelect.addEventListener('click', () => this.showProviderMenu());
+    }
+
+    // Header buttons
+    this.bindHeaderButtons();
+
+    // Toolbar
+    this.bindToolbar();
+  }
+
+  bindHeaderButtons() {
+    const newChatBtn = document.getElementById('newChatBtn');
+    const historyBtn = document.getElementById('historyBtn');
+    const exportBtn = document.getElementById('exportBtn');
+    const privacyBtn = document.getElementById('privacyBtn');
+    const reloadBtn = document.getElementById('reloadBtn');
+    const clearBtn = document.getElementById('clearBtn');
+
+    if (newChatBtn) {
+      newChatBtn.addEventListener('click', () => this.startNewConversation());
+    }
+
+    if (historyBtn) {
+      historyBtn.addEventListener('click', () => this.showHistory());
+    }
+
+    if (exportBtn) {
+      exportBtn.addEventListener('click', () => this.showExportMenu());
+    }
+
+    if (privacyBtn) {
+      privacyBtn.addEventListener('click', () => this.showPrivacySettings());
+    }
+
+    if (reloadBtn) {
+      reloadBtn.addEventListener('click', () => this.reloadConversation());
+    }
+
+    if (clearBtn) {
+      clearBtn.addEventListener('click', () => this.clearConversation());
+    }
+  }
+
+  bindToolbar() {
+    const searchInput = document.getElementById('searchInput');
+    if (searchInput) {
+      searchInput.addEventListener('input', (e) => this.onSearch(e.target.value));
+    }
   }
 
   async initializeWithCurrentTab() {
-    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (tabs[0]) {
-      this.currentTabId = tabs[0].id;
-      this.loadConversation();
+    try {
+      const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (tabs[0] && tabs[0].id) {
+        this.currentTabId = tabs[0].id;
+        await this.loadConversation();
+      }
+    } catch (err) {
+      console.error('[SidePanel] Failed to get current tab:', err);
     }
     
-    // Ping background to check connection
     this.checkBackgroundConnection();
   }
   
   async checkBackgroundConnection() {
     try {
-      const response = await chrome.runtime.sendMessage({ type: 'PING' });
+      const response = await chrome.runtime.sendMessage({ type: 'PING', component: 'sidepanel' });
       console.log('[SidePanel] Background ping response:', response);
       if (response && response.status === 'ok') {
         this.updateConnectionStatus('connected');
+      } else {
+        this.updateConnectionStatus('error');
       }
     } catch (err) {
       console.error('[SidePanel] Background ping failed:', err);
@@ -97,6 +156,10 @@ export class SidePanelController {
     if (message.tabId && message.tabId !== this.currentTabId) {
       console.log('[SidePanel] Ignoring message for different tab:', message.tabId, 'current:', this.currentTabId);
       return;
+    }
+
+    if (message.tabId === undefined && message.type !== MessageTypes.CONVERSATION_CLEARED) {
+      console.log('[SidePanel] Broadcasting - no tabId specified, processing anyway');
     }
 
     switch (message.type) {
@@ -164,29 +227,8 @@ export class SidePanelController {
     });
 
     try {
-      // Also inject into ChatGPT
-      await chrome.scripting.executeScript({
-        target: { tabId: this.currentTabId },
-        func: (prompt) => {
-          // Inject prompt into ChatGPT textarea
-          const textarea = document.querySelector('form textarea');
-          if (textarea) {
-            textarea.value = prompt;
-            textarea.dispatchEvent(new Event('input', { bubbles: true }));
-
-            setTimeout(() => {
-              const enterEvent = new KeyboardEvent('keydown', {
-                bubbles: true,
-                key: 'Enter',
-                code: 'Enter',
-                keyCode: 13
-              });
-              textarea.dispatchEvent(enterEvent);
-            }, 200);
-          }
-        },
-        args: [text]
-      });
+      // Inject into the appropriate provider interface
+      await this.injectPromptIntoProvider(text);
     } catch (error) {
       this.logger.error('[SidePanel] Send failed:', error);
     }
@@ -284,14 +326,17 @@ export class SidePanelController {
   async loadConversation() {
     if (!this.currentTabId) return;
 
-    chrome.runtime.sendMessage({
-      type: MessageTypes.GET_CONVERSATION,
-      tabId: this.currentTabId
-    }, (response) => {
+    try {
+      const response = await chrome.runtime.sendMessage({
+        type: MessageTypes.GET_CONVERSATION,
+        tabId: this.currentTabId
+      });
       if (response && response.messages) {
         this.loadMessages(response.messages);
       }
-    });
+    } catch (err) {
+      console.error('[SidePanel] loadConversation failed:', err);
+    }
   }
 
   formatMessage(text) {
@@ -328,5 +373,376 @@ export class SidePanelController {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+  }
+
+  updateProviderDisplay() {
+    if (this.providerName) {
+      this.providerName.textContent = this.currentProvider.name;
+    }
+    if (this.providerDot) {
+      this.providerDot.style.background = this.currentProvider.color;
+    }
+  }
+
+  showProviderMenu() {
+    // Remove existing menu if present
+    const existingMenu = document.querySelector('.provider-menu');
+    if (existingMenu) {
+      existingMenu.remove();
+      return;
+    }
+
+    const menu = document.createElement('div');
+    menu.className = 'provider-menu';
+
+    this.availableProviders.forEach(provider => {
+      const option = document.createElement('button');
+      option.className = 'provider-option';
+      option.innerHTML = `
+        <span class="provider-dot" style="background: ${provider.color}"></span>
+        ${provider.name}
+      `;
+      option.addEventListener('click', () => {
+        this.switchProvider(provider);
+        menu.remove();
+      });
+      menu.appendChild(option);
+    });
+
+    // Position menu below the provider select button
+    const rect = this.providerSelect.getBoundingClientRect();
+    menu.style.position = 'fixed';
+    menu.style.left = `${rect.left}px`;
+    menu.style.top = `${rect.bottom + 4}px`;
+    menu.style.zIndex = '1000';
+
+    document.body.appendChild(menu);
+
+    // Close menu when clicking outside
+    const closeMenu = (e) => {
+      if (!menu.contains(e.target) && e.target !== this.providerSelect) {
+        menu.remove();
+        document.removeEventListener('click', closeMenu);
+      }
+    };
+    setTimeout(() => document.addEventListener('click', closeMenu), 0);
+  }
+
+  async switchProvider(provider) {
+    this.currentProvider = provider;
+    this.updateProviderDisplay();
+
+    try {
+      await chrome.runtime.sendMessage({
+        type: 'PROVIDER_CHANGED',
+        providerId: provider.id,
+        tabId: this.currentTabId
+      });
+    } catch (err) {
+      console.error('[SidePanel] switchProvider failed:', err);
+    }
+
+    this.clearMessages();
+    this.showToast(`Switched to ${provider.name}`);
+
+    this.logger.info(`Switched to provider: ${provider.name}`);
+  }
+
+  async injectPromptIntoProvider(prompt) {
+    const injectionScripts = {
+      chatgpt: (prompt) => {
+        // Inject prompt into ChatGPT textarea
+        const textarea = document.querySelector('form textarea');
+        if (textarea) {
+          textarea.value = prompt;
+          textarea.dispatchEvent(new Event('input', { bubbles: true }));
+
+          setTimeout(() => {
+            const enterEvent = new KeyboardEvent('keydown', {
+              bubbles: true,
+              key: 'Enter',
+              code: 'Enter',
+              keyCode: 13
+            });
+            textarea.dispatchEvent(enterEvent);
+          }, 200);
+        }
+      },
+      claude: (prompt) => {
+        // Inject prompt into Claude textarea
+        const textarea = document.querySelector('[data-testid="prompt-textarea"]') ||
+                        document.querySelector('textarea[placeholder*="Ask Claude"]') ||
+                        document.querySelector('form textarea');
+        if (textarea) {
+          textarea.value = prompt;
+          textarea.dispatchEvent(new Event('input', { bubbles: true }));
+
+          setTimeout(() => {
+            const submitBtn = document.querySelector('button[data-testid="send-button"]') ||
+                             document.querySelector('button[aria-label*="Send"]') ||
+                             document.querySelector('form button[type="submit"]');
+            if (submitBtn) {
+              submitBtn.click();
+            }
+          }, 200);
+        }
+      },
+      gemini: (prompt) => {
+        // Inject prompt into Gemini textarea
+        const textarea = document.querySelector('rich-textarea')?.shadowRoot?.querySelector('textarea') ||
+                        document.querySelector('textarea[aria-label*="Ask Gemini"]') ||
+                        document.querySelector('textarea[placeholder*="Ask Gemini"]');
+        if (textarea) {
+          textarea.value = prompt;
+          textarea.dispatchEvent(new Event('input', { bubbles: true }));
+
+          setTimeout(() => {
+            const sendBtn = document.querySelector('button[aria-label*="Send"]') ||
+                           document.querySelector('button[data-testid*="send"]') ||
+                           document.querySelector('form button[type="submit"]');
+            if (sendBtn) {
+              sendBtn.click();
+            }
+          }, 200);
+        }
+      }
+    };
+
+    const script = injectionScripts[this.currentProvider.id];
+    if (!script) {
+      this.logger.warn(`No injection script for provider: ${this.currentProvider.id}`);
+      return;
+    }
+
+    if (!this.currentTabId) {
+      this.logger.error('[SidePanel] No currentTabId for injection');
+      return;
+    }
+
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId: this.currentTabId },
+        func: script,
+        args: [prompt]
+      });
+    } catch (error) {
+      this.logger.error('[SidePanel] Script injection failed:', error);
+      throw error;
+    }
+  }
+
+  showToast(message) {
+    const existingToast = document.querySelector('.toast');
+    if (existingToast) {
+      existingToast.remove();
+    }
+
+    const toast = document.createElement('div');
+    toast.className = 'toast';
+    toast.textContent = message;
+
+    document.body.appendChild(toast);
+
+    setTimeout(() => {
+      toast.remove();
+    }, 3000);
+  }
+
+  async startNewConversation() {
+    this.clearMessages();
+    this.showToast('New conversation started');
+    try {
+      await chrome.runtime.sendMessage({
+        type: 'START_NEW_CONVERSATION',
+        tabId: this.currentTabId
+      });
+    } catch (err) {
+      console.error('[SidePanel] startNewConversation failed:', err);
+    }
+  }
+
+  async showHistory() {
+    try {
+      const response = await chrome.runtime.sendMessage({
+        type: 'GET_CONVERSATION_HISTORY',
+        tabId: this.currentTabId
+      });
+      if (response && response.conversations) {
+        this.displayHistoryModal(response.conversations);
+      }
+    } catch (err) {
+      console.error('[SidePanel] showHistory failed:', err);
+    }
+  }
+
+  displayHistoryModal(conversations) {
+    const existing = document.querySelector('.history-modal');
+    if (existing) existing.remove();
+
+    const modal = document.createElement('div');
+    modal.className = 'history-modal';
+    modal.innerHTML = `
+      <div class="history-overlay"></div>
+      <div class="history-content">
+        <h3>Conversation History</h3>
+        <div class="history-list">
+          ${conversations.map(c => `
+            <div class="history-item" data-id="${c.id}">
+              <div class="history-title">${c.title || 'Untitled'}</div>
+              <div class="history-meta">${new Date(c.timestamp).toLocaleString()}</div>
+            </div>
+          `).join('')}
+        </div>
+        <button class="history-close" style="margin-top:12px;padding:8px 16px;background:var(--vivim-primary);color:white;border:none;border-radius:6px;cursor:pointer;">Close</button>
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    modal.querySelector('.history-overlay').addEventListener('click', () => modal.remove());
+    modal.querySelector('.history-close').addEventListener('click', () => modal.remove());
+    modal.querySelectorAll('.history-item').forEach(item => {
+      item.addEventListener('click', () => {
+        this.loadConversationById(item.dataset.id);
+        modal.remove();
+      });
+    });
+  }
+
+  async loadConversationById(conversationId) {
+    try {
+      const response = await chrome.runtime.sendMessage({
+        type: 'GET_CONVERSATION',
+        conversationId: conversationId
+      });
+      if (response && response.messages) {
+        this.loadMessages(response.messages);
+      }
+    } catch (err) {
+      console.error('[SidePanel] loadConversationById failed:', err);
+    }
+  }
+
+  showExportMenu() {
+    const existing = document.querySelector('.export-menu');
+    if (existing) {
+      existing.remove();
+      return;
+    }
+
+    const menu = document.createElement('div');
+    menu.className = 'export-menu';
+    menu.innerHTML = `
+      <button data-format="json">Export as JSON</button>
+      <button data-format="md">Export as Markdown</button>
+      <button data-format="txt">Export as Text</button>
+    `;
+
+    const rect = document.getElementById('exportBtn').getBoundingClientRect();
+    menu.style.position = 'fixed';
+    menu.style.left = `${rect.left - 80}px`;
+    menu.style.top = `${rect.bottom + 4}px`;
+
+    document.body.appendChild(menu);
+
+    menu.querySelectorAll('button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        this.exportConversation(btn.dataset.format);
+        menu.remove();
+      });
+    });
+
+    setTimeout(() => {
+      document.addEventListener('click', function handler(e) {
+        if (!menu.contains(e.target)) {
+          menu.remove();
+          document.removeEventListener('click', handler);
+        }
+      });
+    }, 0);
+  }
+
+  async exportConversation(format) {
+    const messages = this.messageList;
+    let content = '';
+    let mimeType = 'text/plain';
+    let extension = 'txt';
+
+    switch (format) {
+      case 'json':
+        content = JSON.stringify(messages, null, 2);
+        mimeType = 'application/json';
+        extension = 'json';
+        break;
+      case 'md':
+        content = messages.map(m => `## ${m.role === 'user' ? 'User' : 'Assistant'}\n\n${m.content}`).join('\n\n---\n\n');
+        mimeType = 'text/markdown';
+        extension = 'md';
+        break;
+      default:
+        content = messages.map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`).join('\n\n');
+    }
+
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `vivim-conversation-${Date.now()}.${extension}`;
+    a.click();
+    URL.revokeObjectURL(url);
+
+    this.showToast(`Exported as ${format.toUpperCase()}`);
+  }
+
+  showPrivacySettings() {
+    this.showToast('Privacy settings coming soon');
+  }
+
+  async reloadConversation() {
+    this.updateConnectionStatus('connecting');
+    await this.loadConversation();
+    this.showToast('Conversation reloaded');
+  }
+
+  async clearConversation() {
+    if (this.messageList.length === 0 || confirm('Clear all messages?')) {
+      this.clearMessages();
+      try {
+        await chrome.runtime.sendMessage({
+          type: 'CLEAR_CONVERSATION',
+          tabId: this.currentTabId
+        });
+      } catch (err) {
+        console.error('[SidePanel] clearConversation failed:', err);
+      }
+      this.showToast('Conversation cleared');
+    }
+  }
+
+  onSearch(query) {
+    if (!query) {
+      this.renderMessages();
+      return;
+    }
+
+    const filtered = this.messageList.filter(m => 
+      m.content.toLowerCase().includes(query.toLowerCase())
+    );
+
+    if (!this.messagesArea) return;
+    this.messagesArea.innerHTML = '';
+
+    if (filtered.length === 0) {
+      this.messagesArea.innerHTML = '<div class="empty-state"><div class="empty-state__title">No matches found</div></div>';
+    } else {
+      const fragment = document.createDocumentFragment();
+      filtered.forEach(msg => {
+        const msgEl = document.createElement('div');
+        msgEl.className = `msg msg--${msg.role}`;
+        msgEl.innerHTML = `<div class="msg__content">${this.formatMessage(msg.content)}</div>`;
+        fragment.appendChild(msgEl);
+      });
+      this.messagesArea.appendChild(fragment);
+    }
   }
 }

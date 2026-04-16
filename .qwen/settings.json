@@ -1,8 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Read(C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\sendprompt/**)"
-    ]
-  },
-  "$version": 3
-}
