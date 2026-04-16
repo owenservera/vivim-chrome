@@ -67,7 +67,8 @@ export class DestinationManager {
       capabilities,
       config,
       connected: true,
-      registeredAt: Date.now()
+      registeredAt: Date.now(),
+      lastSeen: Date.now()         // updated on every re-registration
     });
 
     this.logger.info(`Registered destination: ${id}`, capabilities);
@@ -108,9 +109,16 @@ export class DestinationManager {
     if (message.type === MessageTypes.STREAM_COMPLETE && !dest.capabilities.receivesComplete) return;
 
     try {
-      chrome.runtime.sendMessage({ ...message, _destination: id }).catch((err) => {
-        // Only log if it's not a "Could not establish connection" error (UI closed)
-        if (!err.message?.includes('Could not establish connection')) {
+      chrome.runtime.sendMessage({ ...message, _destination: id }).then(() => {
+        // Touch lastSeen on successful delivery
+        const d = this.destinations.get(id);
+        if (d) d.lastSeen = Date.now();
+      }).catch((err) => {
+        // "Could not establish connection" means the UI is closed — remove the stale entry
+        if (err.message?.includes('Could not establish connection')) {
+          this.logger.debug(`Destination ${id} unreachable, marking stale`);
+          this.destinations.delete(id);
+        } else {
           this.logger.warn(`Failed to send to ${id}:`, err.message);
         }
       });
@@ -152,5 +160,19 @@ export class DestinationManager {
    */
   init() {
     this.logger.info('DestinationManager initialized');
+
+    // Prune stale destinations every 2 minutes.
+    // Entries that haven't received a successful message delivery in 5 minutes
+    // are removed — this prevents phantom registrations after SW restarts.
+    const TTL_MS = 5 * 60 * 1000;
+    setInterval(() => {
+      const now = Date.now();
+      for (const [id, dest] of this.destinations) {
+        if ((now - (dest.lastSeen || dest.registeredAt)) > TTL_MS) {
+          this.logger.info(`Pruning stale destination: ${id}`);
+          this.destinations.delete(id);
+        }
+      }
+    }, 2 * 60 * 1000);
   }
 }

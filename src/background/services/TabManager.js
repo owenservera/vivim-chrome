@@ -4,9 +4,18 @@ import { MessageTypes } from '../../core/messaging/MessageTypes.js';
 /**
  * Tab management service for tracking AI platform tabs
  */
+// All AI provider hostnames tracked by VIVIM
+const AI_PROVIDER_HOSTS = new Map([
+  ['chatgpt.com',                   'chatgpt'],
+  ['chat.com',                      'chatgpt'],
+  ['claude.ai',                     'claude'],
+  ['gemini.google.com',             'gemini'],
+]);
+
 export class TabManager {
   constructor(messageBus) {
     this.messageBus = messageBus;
+    // Renamed from chatgptTabs — now tracks all AI provider tabs
     this.chatgptTabs = new Map();
     this.activeTabId = null;
     this.logger = new Logger('TabManager');
@@ -36,43 +45,58 @@ export class TabManager {
     try {
       const tabs = await chrome.tabs.query({});
       for (const tab of tabs) {
-        if (this.isChatGPT(tab.url)) {
+        if (this.isAIProvider(tab.url)) {
           this.registerTab(tab.id, tab.url, tab.title);
         }
       }
-      this.logger.info(`Startup scan complete. Found ${this.chatgptTabs.size} ChatGPT tabs.`);
+      this.logger.info(`Startup scan complete. Found ${this.chatgptTabs.size} AI provider tab(s).`);
     } catch (error) {
       this.logger.error('Failed to scan existing tabs:', error);
     }
   }
 
   /**
-   * Check if URL belongs to ChatGPT
+   * Check if URL belongs to any tracked AI provider
+   * @param {string} url
+   * @returns {string|null} provider id, or null if not an AI provider
+   */
+  getProvider(url) {
+    if (!url) return null;
+    try {
+      const { hostname } = new URL(url);
+      return AI_PROVIDER_HOSTS.get(hostname) || null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * @deprecated Use getProvider() instead
+   */
+  isAIProvider(url) {
+    return this.getProvider(url) !== null;
+  }
+
+  /**
+   * @deprecated Kept for back-compat — use isAIProvider()
    */
   isChatGPT(url) {
-    if (!url) return false;
-    try {
-      const parsed = new URL(url);
-      return parsed.hostname === 'chatgpt.com' || parsed.hostname === 'chat.com';
-    } catch {
-      return false;
-    }
+    return this.getProvider(url) === 'chatgpt';
   }
 
   /**
    * Handle tab update events
    */
   handleTabUpdate(tabId, changeInfo, tab) {
-    // Only process when URL changes or loading completes
-    if (!changeInfo.url && changeInfo.status !== 'complete') return;
+    // Only process when the URL itself changes (navigation) to avoid double-firing
+    if (!changeInfo.url) return;
 
-    const url = changeInfo.url || tab.url;
-    
-    if (this.isChatGPT(url)) {
+    const url = changeInfo.url;
+
+    if (this.isAIProvider(url)) {
       this.registerTab(tabId, url, tab.title);
     } else if (this.chatgptTabs.has(tabId)) {
-      // Tab navigated away from ChatGPT
-      this.logger.info(`Tab ${tabId} navigated away from ChatGPT`);
+      this.logger.info(`Tab ${tabId} navigated away from AI provider`);
       this.chatgptTabs.delete(tabId);
     }
   }
@@ -82,20 +106,22 @@ export class TabManager {
    */
   registerTab(tabId, url, title) {
     const isNew = !this.chatgptTabs.has(tabId);
+    const platform = this.getProvider(url) || 'unknown';
     const tabInfo = {
       url,
-      title: title || "ChatGPT",
+      title: title || platform,
+      platform,
       detectedAt: Date.now()
     };
 
     this.chatgptTabs.set(tabId, tabInfo);
 
     if (isNew) {
-      this.logger.info(`Detected new ChatGPT tab: ${tabId} (${url})`);
+      this.logger.info(`Detected new AI provider tab: ${tabId} (${platform} @ ${url})`);
       this.messageBus.emit({
         type: MessageTypes.TAB_DETECTED,
         tabId,
-        platform: "chatgpt",
+        platform,
         url
       });
     }
@@ -119,11 +145,11 @@ export class TabManager {
    */
   async handleTabActivated(activeInfo) {
     this.activeTabId = activeInfo.tabId;
-    
-    // If the newly activated tab is ChatGPT but we didn't know yet, register it
+
+    // If the newly activated tab is an AI provider we haven't seen yet, register it
     try {
       const tab = await chrome.tabs.get(activeInfo.tabId);
-      if (tab && this.isChatGPT(tab.url) && !this.chatgptTabs.has(tab.id)) {
+      if (tab && this.isAIProvider(tab.url) && !this.chatgptTabs.has(tab.id)) {
         this.registerTab(tab.id, tab.url, tab.title);
       }
     } catch (error) {
@@ -197,8 +223,9 @@ export class TabManager {
     const info = this.chatgptTabs.get(tabId);
     return {
       isChatGPT: !!info,
+      isAIProvider: !!info,
       conversationId: info?.conversationId || null,
-      platform: "chatgpt"
+      platform: info?.platform || null
     };
   }
 }

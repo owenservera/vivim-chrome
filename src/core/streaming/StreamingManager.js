@@ -158,17 +158,14 @@ export class StreamingManager {
     queue.push(streamOptions);
     this.streamMultiplexQueue.set(provider, queue);
 
-    // Process batch if queue is full
+    // Process batch immediately if queue has reached batch size;
+    // otherwise process right away with no delay — the interactive chat
+    // use-case has at most one stream at a time and should not wait 100ms
+    // per chunk just to collect a batch that will never form.
     if (queue.length >= this.config.multiplexingBatchSize) {
       this.processMultiplexedBatch(provider);
     } else {
-      // Process with delay to allow batching
-      setTimeout(() => {
-        const currentQueue = this.streamMultiplexQueue.get(provider);
-        if (currentQueue && currentQueue.length > 0) {
-          this.processMultiplexedBatch(provider);
-        }
-      }, 100);
+      this.processMultiplexedBatch(provider);
     }
   }
 
@@ -328,6 +325,8 @@ export class StreamingManager {
         metadata,
         startTime,
         chunks: [],
+        // accumulatedContent replaces per-chunk reconstructContent() calls (O(1) append vs O(n) join)
+        accumulatedContent: '',
         format
       });
 
@@ -350,6 +349,17 @@ export class StreamingManager {
     stream.chunks.push(chunk);
     this.metrics.totalChunksProcessed++;
 
+    // Append the new content delta to the running accumulated string.
+    // This is O(1) per chunk instead of the previous O(n) reconstructContent()
+    // call, which joined ALL chunks on every single chunk event.
+    const delta = chunk.content || '';
+    if (chunk.cumulative) {
+      // Some parsers send the full cumulative text each time — use it directly
+      stream.accumulatedContent = delta;
+    } else {
+      stream.accumulatedContent += delta;
+    }
+
     // Track chunk processing performance
     const processingTime = Date.now() - startTime;
     this.updateChunkMetrics(processingTime);
@@ -358,7 +368,7 @@ export class StreamingManager {
     if (this.messageBridge) {
       this.messageBridge.send('chatChunk', {
         role: chunk.role || 'assistant',
-        content: this.reconstructContent(stream.chunks),
+        content: stream.accumulatedContent,
         model: stream.metadata.model,
         seq: stream.chunks.length,
         streamId,

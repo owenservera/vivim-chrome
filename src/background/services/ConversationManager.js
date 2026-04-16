@@ -142,22 +142,24 @@ export class ConversationManager {
   async handleStreamChunk(message, sender) {
     try {
       const tabId = message.tabId || sender?.tab?.id;
-
+      // handleStreamChunkInternal already calls broadcastToUI with the
+      // correctly processed/deduplicated state. Do NOT call broadcastToUI
+      // again here with the raw, unprocessed message — that would cause
+      // duplicate STREAM_UPDATE events in the side panel.
       await this.handleStreamChunkInternal(tabId, message);
-
-      // Notify UI
-      this.broadcastToUI({
-        type: MessageTypes.STREAM_UPDATE,
-        role: message.role,
-        content: message.content,
-        model: message.model,
-        tabId,
-        seq: message.seq,
-        isFinal: message.isFinal
-      });
 
     } catch (error) {
       this.logger.error('Error handling stream chunk:', error);
+      const tabId = message.tabId || sender?.tab?.id;
+      if (tabId) {
+        this.streamingMessages.delete('stream_' + tabId);
+        this.logger.info(`Cleaned up streaming state for tab ${tabId} after error`);
+      }
+      this.broadcastToUI({
+        type: MessageTypes.ERROR,
+        error: 'Stream processing error',
+        tabId
+      });
     }
   }
 
@@ -245,10 +247,11 @@ export class ConversationManager {
   async handleGetConversationHistory(message, sender, sendResponse) {
     try {
       const history = await this.getConversationHistory();
-      if (sendResponse) sendResponse({ history });
+      // UI expects the key `conversations`, not `history`
+      if (sendResponse) sendResponse({ conversations: history });
     } catch (error) {
       this.logger.error('Error getting history:', error);
-      if (sendResponse) sendResponse({ history: [] });
+      if (sendResponse) sendResponse({ conversations: [] });
     }
   }
 
@@ -306,24 +309,20 @@ export class ConversationManager {
         };
         this.streamingMessages.set(key, existing);
       } else {
-        // FIX: Sequence validation - skip out-of-order chunks
         if (seq <= existing.lastSeq) {
           this.logger.debug(`Out-of-order chunk: seq=${seq}, lastSeq=${existing.lastSeq}, skipping`);
           return;
         }
 
-        // FIX: Append content instead of replacing (for partial chunks)
         existing.content = message.content;
         existing.lastSeq = seq;
         if (message.model) existing.model = message.model;
         
-        // FIX: Don't store on isFinal here - wait for STREAM_COMPLETE to avoid double storage
         if (message.isFinal) {
           existing.isFinal = true;
         }
       }
 
-      // Notify UI
       this.broadcastToUI({
         type: MessageTypes.STREAM_UPDATE,
         role: "assistant",
@@ -342,25 +341,26 @@ export class ConversationManager {
   }
 
   async finalizeStreamingMessage(tabId) {
-    const streamKey = "stream_" + tabId;
+    const streamKey = 'stream_' + tabId;
     const streaming = this.streamingMessages.get(streamKey);
     if (!streaming) return;
 
-    if (streaming.isFinal) {
-      this.streamingMessages.delete(streamKey);
-      return;
-    }
-
+    // Always remove the in-flight record first to prevent double-finalize
     this.streamingMessages.delete(streamKey);
-    const finalized = {
-      role: "assistant",
-      content: streaming.content,
-      model: streaming.model,
-      timestamp: streaming.startTime,
-      streamed: true
-    };
 
-    await this.storeMessage(tabId, finalized);
+    // Persist the completed message regardless of the isFinal flag.
+    // Previously, messages marked isFinal were deleted without being saved —
+    // that caused the final AI response to be silently lost.
+    if (streaming.content) {
+      const finalized = {
+        role: 'assistant',
+        content: streaming.content,
+        model: streaming.model,
+        timestamp: streaming.startTime,
+        streamed: true
+      };
+      await this.storeMessage(tabId, finalized);
+    }
   }
 
   getConversationKey(tabId, conversationId) {
@@ -424,7 +424,28 @@ export class ConversationManager {
   }
 
   async getConversationHistory() {
-    return [];
+    try {
+      const conversationIds = await this.storage.getAllConversationIds();
+      const history = [];
+      
+      for (const id of conversationIds) {
+        const messages = await this.storage.getConversation(id);
+        if (messages.length > 0) {
+          const firstUserMsg = messages.find(m => m.role === 'user');
+          history.push({
+            id,
+            title: firstUserMsg ? firstUserMsg.content.substring(0, 50) : 'Untitled',
+            timestamp: messages[0].timestamp || Date.now(),
+            messageCount: messages.length
+          });
+        }
+      }
+      
+      return history.sort((a, b) => b.timestamp - a.timestamp);
+    } catch (error) {
+      this.logger.error('Error getting conversation history:', error);
+      return [];
+    }
   }
 
   async loadConversationFromDOM(tabId) {

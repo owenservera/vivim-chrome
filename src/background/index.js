@@ -43,18 +43,24 @@ services.set('destinationManager', destinationManager);
 
 // Handle incoming messages from content scripts and UI
 const ASYNC_RESPONSE_TYPES = new Set([
-  'GET_CONVERSATION',
+  'GET_CONVERSATION',            // async: needs response after storage lookup
   'GET_CONVERSATION_HISTORY',
   'SAVE_FROM_DOM',
   'CLEAR_CONVERSATION',
   'START_NEW_CONVERSATION',
+  'REGISTER_DESTINATION',        // sync but guard route sends response above
   'PING'
 ]);
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   logger.debug('Received message:', message.type, message);
 
-  // Handle ping for health check
+  if (message.type === 'REGISTER_DESTINATION') {
+    destinationManager.registerDestination(message.id, message.config);
+    sendResponse({ ok: true });
+    return;
+  }
+
   if (message.type === 'PING') {
     // Automatically register the sender as a destination if it's a UI component
     if (message.component === 'sidepanel' || message.component === 'options') {
@@ -126,7 +132,7 @@ chrome.runtime.onInstalled.addListener(() => {
   init();
 });
 
-// Initialize immediately if not already done
-if (!chrome.runtime.onStartup.hasListeners()) {
-  init();
-}
+// Always initialize immediately: the service worker is executed fresh on each
+// activation, so we must init synchronously. onStartup/onInstalled only fire
+// on specific lifecycle events and are not guaranteed on every SW activation.
+init();

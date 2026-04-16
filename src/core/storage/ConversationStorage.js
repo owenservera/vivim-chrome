@@ -6,6 +6,26 @@ export class ConversationStorage {
     this.CONVERSATION_PREFIX = 'conv_';
     this.TEMP_CONVERSATION_PREFIX = 'conv_temp_';
     this.contentIndex = new Map();
+    this.locks = new Map();
+  }
+
+  async acquireLock(conversationId) {
+    const maxAttempts = 10;
+    const delay = 50;
+    
+    for (let i = 0; i < maxAttempts; i++) {
+      if (!this.locks.has(conversationId)) {
+        this.locks.set(conversationId, true);
+        return true;
+      }
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+    console.warn('[ConversationStorage] Lock acquisition timeout for:', conversationId);
+    return false;
+  }
+
+  releaseLock(conversationId) {
+    this.locks.delete(conversationId);
   }
 
   hashContent(content) {
@@ -112,6 +132,13 @@ export class ConversationStorage {
    * @param {boolean} isTemp - Whether it's a temporary conversation
    */
   async addMessage(conversationId, message, isTemp = false) {
+    const lockKey = `${conversationId}_${isTemp}`;
+    const acquired = await this.acquireLock(lockKey);
+    
+    if (!acquired) {
+      console.warn('[ConversationStorage] Could not acquire lock, proceeding anyway');
+    }
+    
     try {
       const existingMessages = await this.getConversation(conversationId, isTemp);
 
@@ -132,6 +159,8 @@ export class ConversationStorage {
       }
     } catch (error) {
       console.error('[ConversationStorage] addMessage failed:', error);
+    } finally {
+      if (acquired) this.releaseLock(lockKey);
     }
   }
 

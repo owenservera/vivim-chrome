@@ -88,14 +88,14 @@ export class MessageBus {
       try {
         const result = await Promise.resolve(middleware(processedMessage));
         if (result === false) {
-          throw new Error('Message blocked by middleware');
+          this.logger.warn(`Message blocked by middleware: ${message.type}`);
+          return null;
         }
         if (result && typeof result === 'object') {
           processedMessage = result;
         }
       } catch (error) {
         this.logger.warn(`Middleware error for ${message.type}:`, error.message);
-        throw error; // Re-throw to halt the chain if a middleware fails
       }
     }
 
@@ -112,15 +112,22 @@ export class MessageBus {
       return [];
     }
 
-    const promises = Array.from(handlers).map(async (handler) => {
-      try {
-        return await Promise.resolve(handler(message, sender));
-      } catch (error) {
-        this.logger.error(`Handler error for ${message.type}:`, error);
-        return { error: error.message };
-      }
-    });
+    const results = await Promise.allSettled(
+      Array.from(handlers).map(async (handler) => {
+        try {
+          return await Promise.resolve(handler(message, sender));
+        } catch (error) {
+          this.logger.error(`Handler error for ${message.type}:`, error);
+          return { error: error.message, handlerFailed: true };
+        }
+      })
+    );
 
-    return Promise.all(promises);
+    const errors = results.filter(r => r.status === 'rejected' || r.value?.handlerFailed);
+    if (errors.length > 0) {
+      this.logger.warn(`MessageBus: ${errors.length} handlers failed for ${message.type}`);
+    }
+    
+    return results.map(r => r.status === 'fulfilled' ? r.value : { error: r.reason?.message });
   }
 }

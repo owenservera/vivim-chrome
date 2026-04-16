@@ -3,7 +3,8 @@ import { ChatGPTProvider } from './chatgpt/ChatGPTProvider.js';
 import { ClaudeProvider } from './claude/ClaudeProvider.js';
 import { GeminiProvider } from './gemini/GeminiProvider.js';
 import { createWebBridge } from '../core/bridge/index.js';
-import { stealthFetchManager } from '../content/fetch/StealthFetchManager.js';
+// NOTE: StealthFetchManager is an ISOLATED-world module (uses chrome.runtime).
+// It must NOT be imported here because providers/index.js runs in MAIN world.
 
 const bridge = createWebBridge({
   selfId: 'vivim-bridge',
@@ -18,34 +19,13 @@ const chatGPTProvider = new ChatGPTProvider();
 chatGPTProvider.setBridge(bridge);
 providerRegistry.register(chatGPTProvider);
 
-// Register with stealth fetch manager
-stealthFetchManager.registerProvider(chatGPTProvider.id, {
-  preferContentScript: chatGPTProvider.stealthConfig.preferContentScript,
-  contentScriptHosts: chatGPTProvider.stealthConfig.contentScriptHosts,
-  fallbackToBackground: true
-});
-
 const claudeProvider = new ClaudeProvider();
 claudeProvider.setBridge(bridge);
 providerRegistry.register(claudeProvider);
 
-// Register with stealth fetch manager
-stealthFetchManager.registerProvider(claudeProvider.id, {
-  preferContentScript: claudeProvider.stealthConfig.preferContentScript,
-  contentScriptHosts: claudeProvider.stealthConfig.contentScriptHosts,
-  fallbackToBackground: true
-});
-
 const geminiProvider = new GeminiProvider();
 geminiProvider.setBridge(bridge);
 providerRegistry.register(geminiProvider);
-
-// Register with stealth fetch manager
-stealthFetchManager.registerProvider(geminiProvider.id, {
-  preferContentScript: geminiProvider.stealthConfig.preferContentScript,
-  contentScriptHosts: geminiProvider.stealthConfig.contentScriptHosts,
-  fallbackToBackground: true
-});
 
 function setupInterception() {
   const originalFetch = window.fetch;
@@ -167,5 +147,13 @@ function init() {
 
 init();
 
-window.VIVIM_PROVIDER_REGISTRY = providerRegistry;
-window.stealthFetchManager = stealthFetchManager;
+// Expose registry as non-enumerable/non-configurable to reduce page-script attack surface.
+// Page scripts cannot delete or reassign this, and it won't appear in Object.keys(window).
+Object.defineProperty(window, 'VIVIM_PROVIDER_REGISTRY', {
+  value: providerRegistry,
+  writable: false,
+  enumerable: false,
+  configurable: false
+});
+// Note: stealthFetchManager is intentionally NOT exposed on window —
+// it is an internal module used only within the extension bundle.

@@ -16,6 +16,8 @@ export class SidePanelController {
     this.messageList = [];
     this.streamingMessage = null;
     this.logger = console;
+    this.lastSentTime = 0;
+    this.rateLimitMs = 1000;
 
     this.init();
   }
@@ -30,11 +32,27 @@ export class SidePanelController {
     this.providerSelect = document.getElementById('providerSelect');
     this.providerName = document.getElementById('providerName');
     this.providerDot = document.getElementById('providerDot');
+    this.msgCountEl = document.getElementById('msgCount');
 
     this.bindEvents();
     this.initializeWithCurrentTab();
     this.updateConnectionStatus('connecting');
     this.updateProviderDisplay();
+
+    // Register the runtime message listener so the side panel receives
+    // broadcasts from the background (STREAM_UPDATE, MESSAGE_ADDED, etc.).
+    // This was previously missing — the side panel was completely deaf.
+    chrome.runtime.onMessage.addListener(this.handleMessage.bind(this));
+  }
+
+  flushPendingUpdates() {
+    if (this.pendingStreamUpdates && this.pendingStreamUpdates.length > 0) {
+      console.log('[SidePanel] Flushing pending stream updates:', this.pendingStreamUpdates.length);
+      for (const update of this.pendingStreamUpdates) {
+        this.updateStreamingMessage(update.content, update.model, update.seq, update.isFinal);
+      }
+      this.pendingStreamUpdates = [];
+    }
   }
 
   updateConnectionStatus(status) {
@@ -60,7 +78,6 @@ export class SidePanelController {
   }
 
   bindEvents() {
-    // Input events
     if (this.promptInput) {
       this.promptInput.addEventListener('input', () => this.onInputChange());
       this.promptInput.addEventListener('keydown', (e) => this.onInputKeyDown(e));
@@ -74,11 +91,9 @@ export class SidePanelController {
       this.providerSelect.addEventListener('click', () => this.showProviderMenu());
     }
 
-    // Header buttons
     this.bindHeaderButtons();
-
-    // Toolbar
     this.bindToolbar();
+    this.flushPendingUpdates();
   }
 
   bindHeaderButtons() {
@@ -131,69 +146,122 @@ export class SidePanelController {
     } catch (err) {
       console.error('[SidePanel] Failed to get current tab:', err);
     }
-    
-    this.checkBackgroundConnection();
+
+    // checkBackgroundConnection() with retry — the first sendMessage may fail if
+    // the service worker just woke up. Retry up to 3 times with 500ms backoff.
+    this._connectWithRetry(0);
   }
-  
-  async checkBackgroundConnection() {
+
+  async _connectWithRetry(attempt) {
+    const MAX_ATTEMPTS = 4;
+    const DELAY_MS = 500;
     try {
-      const response = await chrome.runtime.sendMessage({ type: 'PING', component: 'sidepanel' });
-      console.log('[SidePanel] Background ping response:', response);
-      if (response && response.status === 'ok') {
+      const resp = await chrome.runtime.sendMessage({
+        type: 'REGISTER_DESTINATION',
+        id: 'sidepanel',
+        config: {
+          capabilities: {
+            receivesStreaming: true,
+            receivesComplete: true,
+            canSendPrompts: true
+          }
+        }
+      });
+      if (resp && resp.ok) {
         this.updateConnectionStatus('connected');
-      } else {
-        this.updateConnectionStatus('error');
+        console.log('[SidePanel] Registered with background on attempt', attempt + 1);
+        this._startHeartbeat();
+        return;
       }
     } catch (err) {
-      console.error('[SidePanel] Background ping failed:', err);
+      console.warn(`[SidePanel] Registration attempt ${attempt + 1} failed:`, err.message);
+    }
+    if (attempt < MAX_ATTEMPTS - 1) {
+      setTimeout(() => this._connectWithRetry(attempt + 1), DELAY_MS * (attempt + 1));
+    } else {
       this.updateConnectionStatus('error');
     }
   }
 
+  _startHeartbeat() {
+    // Re-register every 30s to survive MV3 service worker restarts
+    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
+    this.heartbeatTimer = setInterval(async () => {
+      try {
+        await chrome.runtime.sendMessage({
+          type: 'REGISTER_DESTINATION',
+          id: 'sidepanel',
+          config: {
+            capabilities: {
+              receivesStreaming: true,
+              receivesComplete: true,
+              canSendPrompts: true
+            }
+          }
+        });
+      } catch {
+        // SW may have restarted — next heartbeat tick will re-register
+      }
+    }, 30_000);
+  }
+
   handleMessage(message, sender, sendResponse) {
-    console.log('[SidePanel] Received message:', message.type, message);
+    try {
+      console.log('[SidePanel] Received message:', message.type, message);
 
-    if (message.tabId && message.tabId !== this.currentTabId) {
-      console.log('[SidePanel] Ignoring message for different tab:', message.tabId, 'current:', this.currentTabId);
-      return;
+      // Filter messages not addressed to this tab (but allow global broadcasts)
+      const isBroadcast = message.tabId === undefined || message.tabId === null;
+      if (!isBroadcast && message.tabId !== this.currentTabId) {
+        console.log('[SidePanel] Ignoring message for different tab:', message.tabId, 'current:', this.currentTabId);
+        return false;
+      }
+
+      switch (message.type) {
+        case MessageTypes.MESSAGE_ADDED:
+          this.updateConnectionStatus('connected');
+          this.addMessage(message.role, message.content, message.model, message.timestamp);
+          break;
+
+        case MessageTypes.STREAM_UPDATE:
+          this.updateConnectionStatus('streaming');
+          this.updateStreamingMessage(message.content, message.model, message.seq, message.isFinal);
+          break;
+
+        case MessageTypes.STREAM_COMPLETE:
+          this.updateConnectionStatus('connected');
+          this.finalizeStreamingMessage();
+          break;
+
+        case MessageTypes.ERROR:
+          this.updateConnectionStatus('error');
+          this.cleanupStreamingMessage();
+          this.showToast(message.error || 'An error occurred');
+          break;
+
+        case MessageTypes.CONVERSATION_CLEARED:
+          this.clearMessages();
+          break;
+
+        case MessageTypes.CONVERSATION_LOADED:
+          this.updateConnectionStatus('connected');
+          this.loadMessages(message.messages);
+          break;
+
+        case MessageTypes.TAB_DETECTED:
+          console.log('[SidePanel] Tab detected:', message.tabId, message.url);
+          if (this.currentTabId === message.tabId) {
+            this.loadConversation();
+          }
+          break;
+      }
+    } catch (error) {
+      console.error('[SidePanel] Error handling message:', error);
+      this.updateConnectionStatus('error');
     }
 
-    if (message.tabId === undefined && message.type !== MessageTypes.CONVERSATION_CLEARED) {
-      console.log('[SidePanel] Broadcasting - no tabId specified, processing anyway');
-    }
-
-    switch (message.type) {
-      case MessageTypes.MESSAGE_ADDED:
-        this.updateConnectionStatus('connected');
-        this.addMessage(message.role, message.content, message.model, message.timestamp);
-        break;
-
-      case MessageTypes.STREAM_UPDATE:
-        this.updateConnectionStatus('streaming');
-        this.updateStreamingMessage(message.content, message.model, message.seq, message.isFinal);
-        break;
-
-      case MessageTypes.STREAM_COMPLETE:
-        this.updateConnectionStatus('connected');
-        this.finalizeStreamingMessage();
-        break;
-
-      case MessageTypes.CONVERSATION_CLEARED:
-        this.clearMessages();
-        break;
-
-      case MessageTypes.CONVERSATION_LOADED:
-        this.updateConnectionStatus('connected');
-        this.loadMessages(message.messages);
-        break;
-
-      case MessageTypes.TAB_DETECTED:
-        console.log('[SidePanel] Tab detected:', message.tabId, message.url);
-        if (this.currentTabId === message.tabId) {
-          this.loadConversation();
-        }
-        break;
-    }
+    // Return false — none of the handled message types require an async sendResponse
+    // from the side panel side. Returning false lets the channel close immediately.
+    return false;
   }
 
   async switchTab(tabId) {
@@ -208,6 +276,13 @@ export class SidePanelController {
       console.log('[SidePanel] Cannot send: text empty or no currentTabId', { text: !!text, currentTabId: this.currentTabId });
       return;
     }
+
+    const now = Date.now();
+    if (now - this.lastSentTime < this.rateLimitMs) {
+      this.showToast('Please wait before sending another message');
+      return;
+    }
+    this.lastSentTime = now;
 
     console.log('[SidePanel] Sending prompt:', text, 'to tab:', this.currentTabId);
 
@@ -235,24 +310,49 @@ export class SidePanelController {
   }
 
   addMessage(role, content, model, timestamp) {
+    if (!this.messagesArea) {
+      console.warn('[SidePanel] messagesArea not available, queuing message');
+      this.messageList.push({ role, content, model, timestamp });
+      return;
+    }
     this.messageList.push({ role, content, model, timestamp });
     this.renderMessages();
   }
 
   updateStreamingMessage(content, model, seq, isFinal = false) {
+    if (!this.messagesArea || !this.emptyState) {
+      if (!this.pendingStreamUpdates) this.pendingStreamUpdates = [];
+      this.pendingStreamUpdates.push({ content, model, seq, isFinal });
+      return;
+    }
+
     if (!this.streamingMessage) {
       this.streamingMessage = document.createElement('div');
       this.streamingMessage.className = 'msg msg--assistant msg--streaming';
+      this.streamingMessage.dataset.seq = '0';
       const contentEl = document.createElement('div');
       contentEl.className = 'msg__content';
       this.streamingMessage.appendChild(contentEl);
       this.messagesArea?.appendChild(this.streamingMessage);
       this.emptyState?.classList.add('hidden');
+      this.chunkBuffer = [];
     }
 
-    const contentEl = this.streamingMessage.querySelector('.msg__content');
-    if (contentEl) {
-      contentEl.innerHTML = this.formatMessage(content);
+    const currentSeq = parseInt(this.streamingMessage.dataset.seq || '0', 10);
+    
+    if (seq > currentSeq) {
+      this.chunkBuffer = this.chunkBuffer.filter(c => c.seq > currentSeq);
+      this.chunkBuffer.push({ content, seq });
+      this.chunkBuffer.sort((a, b) => a.seq - b.seq);
+      
+      let lastSeq = currentSeq;
+      for (const chunk of this.chunkBuffer) {
+        if (chunk.seq === lastSeq + 1) {
+          lastSeq = chunk.seq;
+          this.applyChunkToStream(chunk.content);
+        }
+      }
+      this.streamingMessage.dataset.seq = String(lastSeq);
     }
     
     this.messagesArea?.scrollTo({
@@ -261,16 +361,22 @@ export class SidePanelController {
     });
 
     if (isFinal) {
+      this.chunkBuffer = [];
       this.finalizeStreamingMessage(model);
+    }
+  }
+
+  applyChunkToStream(content) {
+    const contentEl = this.streamingMessage?.querySelector('.msg__content');
+    if (contentEl) {
+      contentEl.innerHTML = this.formatMessage(content);
     }
   }
 
   finalizeStreamingMessage(model) {
     if (this.streamingMessage) {
-      // Convert streaming message to regular message by removing streaming class
       this.streamingMessage.classList.remove('msg--streaming');
 
-      // Add metadata if available
       if (!this.streamingMessage.querySelector('.msg__meta')) {
         const metaEl = document.createElement('div');
         metaEl.className = 'msg__meta';
@@ -278,7 +384,13 @@ export class SidePanelController {
         this.streamingMessage.appendChild(metaEl);
       }
 
-      // Reset streaming state - don't remove the element, it becomes a regular message
+      this.streamingMessage = null;
+    }
+  }
+
+  cleanupStreamingMessage() {
+    if (this.streamingMessage) {
+      this.streamingMessage.remove();
       this.streamingMessage = null;
     }
   }
@@ -296,15 +408,22 @@ export class SidePanelController {
   renderMessages() {
     if (!this.messagesArea) return;
 
+    // If a stream is in progress, detach it before wiping the DOM so it
+    // is not destroyed. We will re-attach it after rendering history.
+    const activeStream = this.streamingMessage;
+    if (activeStream) {
+      activeStream.remove();
+    }
+
     this.messagesArea.innerHTML = '';
 
-    if (this.messageList.length === 0) {
+    if (this.messageList.length === 0 && !activeStream) {
       this.messagesArea.appendChild(this.emptyState);
       this.emptyState?.classList.remove('hidden');
     } else {
       this.emptyState?.classList.add('hidden');
       const fragment = document.createDocumentFragment();
-      
+
       this.messageList.forEach(msg => {
         const msgEl = document.createElement('div');
         msgEl.className = `msg msg--${msg.role}`;
@@ -317,9 +436,20 @@ export class SidePanelController {
         `;
         fragment.appendChild(msgEl);
       });
-      
+
       this.messagesArea.appendChild(fragment);
+
+      // Re-attach the active streaming bubble after history
+      if (activeStream) {
+        this.messagesArea.appendChild(activeStream);
+      }
+
       this.messagesArea.scrollTo(0, this.messagesArea.scrollHeight);
+    }
+
+    // Keep the status bar message count accurate
+    if (this.msgCountEl) {
+      this.msgCountEl.textContent = `${this.messageList.length} message${this.messageList.length !== 1 ? 's' : ''}`;
     }
   }
 
@@ -429,21 +559,24 @@ export class SidePanelController {
   }
 
   async switchProvider(provider) {
-    this.currentProvider = provider;
-    this.updateProviderDisplay();
-
     try {
       await chrome.runtime.sendMessage({
         type: 'PROVIDER_CHANGED',
         providerId: provider.id,
         tabId: this.currentTabId
       });
+      await chrome.runtime.sendMessage({
+        type: 'CLEAR_CONVERSATION',
+        tabId: this.currentTabId
+      });
+      this.currentProvider = provider;
+      this.updateProviderDisplay();
+      this.clearMessages();
+      this.showToast(`Switched to ${provider.name}`);
     } catch (err) {
       console.error('[SidePanel] switchProvider failed:', err);
+      this.showToast(`Failed to switch to ${provider.name}`);
     }
-
-    this.clearMessages();
-    this.showToast(`Switched to ${provider.name}`);
 
     this.logger.info(`Switched to provider: ${provider.name}`);
   }
@@ -451,7 +584,6 @@ export class SidePanelController {
   async injectPromptIntoProvider(prompt) {
     const injectionScripts = {
       chatgpt: (prompt) => {
-        // Inject prompt into ChatGPT textarea
         const textarea = document.querySelector('form textarea');
         if (textarea) {
           textarea.value = prompt;
@@ -469,7 +601,6 @@ export class SidePanelController {
         }
       },
       claude: (prompt) => {
-        // Inject prompt into Claude textarea
         const textarea = document.querySelector('[data-testid="prompt-textarea"]') ||
                         document.querySelector('textarea[placeholder*="Ask Claude"]') ||
                         document.querySelector('form textarea');
@@ -488,7 +619,6 @@ export class SidePanelController {
         }
       },
       gemini: (prompt) => {
-        // Inject prompt into Gemini textarea
         const textarea = document.querySelector('rich-textarea')?.shadowRoot?.querySelector('textarea') ||
                         document.querySelector('textarea[aria-label*="Ask Gemini"]') ||
                         document.querySelector('textarea[placeholder*="Ask Gemini"]');
@@ -511,11 +641,13 @@ export class SidePanelController {
     const script = injectionScripts[this.currentProvider.id];
     if (!script) {
       this.logger.warn(`No injection script for provider: ${this.currentProvider.id}`);
+      this.showToast(`Provider ${this.currentProvider.name} not supported`);
       return;
     }
 
     if (!this.currentTabId) {
       this.logger.error('[SidePanel] No currentTabId for injection');
+      this.showToast('No active tab for injection');
       return;
     }
 
@@ -527,6 +659,7 @@ export class SidePanelController {
       });
     } catch (error) {
       this.logger.error('[SidePanel] Script injection failed:', error);
+      this.showToast('Failed to send prompt - please try manually');
       throw error;
     }
   }
@@ -543,8 +676,13 @@ export class SidePanelController {
 
     document.body.appendChild(toast);
 
-    setTimeout(() => {
+    if (this.toastTimeout) {
+      clearTimeout(this.toastTimeout);
+    }
+    
+    this.toastTimeout = setTimeout(() => {
       toast.remove();
+      this.toastTimeout = null;
     }, 3000);
   }
 
@@ -663,35 +801,45 @@ export class SidePanelController {
   }
 
   async exportConversation(format) {
-    const messages = this.messageList;
-    let content = '';
-    let mimeType = 'text/plain';
-    let extension = 'txt';
+    try {
+      const response = await chrome.runtime.sendMessage({
+        type: MessageTypes.GET_CONVERSATION,
+        tabId: this.currentTabId
+      });
+      
+      const messages = response?.messages || this.messageList;
+      let content = '';
+      let mimeType = 'text/plain';
+      let extension = 'txt';
 
-    switch (format) {
-      case 'json':
-        content = JSON.stringify(messages, null, 2);
-        mimeType = 'application/json';
-        extension = 'json';
-        break;
-      case 'md':
-        content = messages.map(m => `## ${m.role === 'user' ? 'User' : 'Assistant'}\n\n${m.content}`).join('\n\n---\n\n');
-        mimeType = 'text/markdown';
-        extension = 'md';
-        break;
-      default:
-        content = messages.map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`).join('\n\n');
+      switch (format) {
+        case 'json':
+          content = JSON.stringify(messages, null, 2);
+          mimeType = 'application/json';
+          extension = 'json';
+          break;
+        case 'md':
+          content = messages.map(m => `## ${m.role === 'user' ? 'User' : 'Assistant'}\n\n${m.content}`).join('\n\n---\n\n');
+          mimeType = 'text/markdown';
+          extension = 'md';
+          break;
+        default:
+          content = messages.map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`).join('\n\n');
+      }
+
+      const blob = new Blob([content], { type: mimeType });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `vivim-conversation-${Date.now()}.${extension}`;
+      a.click();
+      URL.revokeObjectURL(url);
+
+      this.showToast(`Exported as ${format.toUpperCase()}`);
+    } catch (err) {
+      console.error('[SidePanel] Export failed:', err);
+      this.showToast('Export failed');
     }
-
-    const blob = new Blob([content], { type: mimeType });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `vivim-conversation-${Date.now()}.${extension}`;
-    a.click();
-    URL.revokeObjectURL(url);
-
-    this.showToast(`Exported as ${format.toUpperCase()}`);
   }
 
   showPrivacySettings() {
@@ -739,7 +887,13 @@ export class SidePanelController {
       filtered.forEach(msg => {
         const msgEl = document.createElement('div');
         msgEl.className = `msg msg--${msg.role}`;
-        msgEl.innerHTML = `<div class="msg__content">${this.formatMessage(msg.content)}</div>`;
+        msgEl.innerHTML = `
+          <div class="msg__content">${this.formatMessage(msg.content)}</div>
+          <div class="msg__meta">
+            <span>${msg.model || (msg.role === 'user' ? 'You' : 'AI')}</span> • 
+            <span>${this.formatTime(msg.timestamp)}</span>
+          </div>
+        `;
         fragment.appendChild(msgEl);
       });
       this.messagesArea.appendChild(fragment);

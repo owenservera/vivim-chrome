@@ -171,18 +171,27 @@ export class WebBridge {
   }
   
   handleMessage(event) {
-    this.messageCount++;
+    // In the MAIN world, all postMessage events arrive with event.source === window.
+    // Filtering on source would drop every response from the content script.
+    // We rely solely on the communicationId field for security scoping.
+    if (!event.data || typeof event.data !== 'object') {
+      return;
+    }
+
     const parsed = parseMessage(event.data);
-    
+
     if (!parsed.valid) {
       return;
     }
-    
+
     const expectedId = this.config.selfId;
     const targetId = this.config.contentId;
+
     if (event.data?.communicationId !== expectedId && event.data?.communicationId !== targetId) {
       return;
     }
+    
+    this.messageCount++;
     
     const { action, data, requestId, needResponse, success, error } = parsed;
     
@@ -340,6 +349,9 @@ export class WebBridge {
 
 export function createWebBridge(options = {}) {
   if (!webBridgeInstance) {
+    webBridgeInstance = new WebBridge(options);
+  } else if (options.reset === true) {
+    webBridgeInstance.destroy();
     webBridgeInstance = new WebBridge(options);
   }
   return webBridgeInstance;
