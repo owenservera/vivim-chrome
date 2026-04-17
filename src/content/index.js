@@ -229,43 +229,43 @@ function injectPromptIntoPage(provider, prompt) {
 
   const injectionScripts = {
     chatgpt: (prompt) => {
-      console.log('[Content] Looking for ChatGPT textarea...');
+      console.log('[Content] Looking for ChatGPT input area...');
 
-      // Try multiple selectors for ChatGPT textarea
-      let textarea = document.querySelector('form textarea') ||
-                    document.querySelector('textarea[placeholder*="Ask"]') ||
-                    document.querySelector('textarea[placeholder*="Send a message"]') ||
-                    document.querySelector('textarea[data-testid*="prompt"]') ||
-                    document.querySelector('#prompt-textarea') ||
-                    document.querySelector('textarea');
+      // Try multiple selectors for ChatGPT input area, prioritizing visible ones and #prompt-textarea
+      let inputArea = document.querySelector('#prompt-textarea') ||
+                      document.querySelector('textarea[data-testid*="prompt"]') ||
+                      document.querySelector('form textarea:not([style*="display: none"])') ||
+                      document.querySelector('textarea[placeholder*="Ask"]');
 
-      console.log('[Content] Found ChatGPT textarea:', !!textarea);
-      if (textarea) {
-        console.log('[Content] Textarea element:', textarea);
-        console.log('[Content] Textarea placeholder:', textarea.placeholder);
-      }
+      console.log('[Content] Found ChatGPT input area:', !!inputArea, inputArea?.tagName);
 
-      if (textarea) {
-        console.log('[Content] Setting textarea value and dispatching input event');
-        textarea.value = prompt;
-        textarea.dispatchEvent(new Event('input', { bubbles: true }));
-        textarea.dispatchEvent(new Event('change', { bubbles: true }));
+      if (inputArea) {
+        inputArea.focus();
 
-        // Also try to focus the textarea
-        textarea.focus();
+        if (inputArea.contentEditable === 'true' || inputArea.tagName === 'DIV') {
+          console.log('[Content] Injecting into contenteditable div');
+          // Clear and insert text using execCommand for correct ProseMirror event handling
+          inputArea.innerHTML = '';
+          document.execCommand('insertText', false, prompt);
+        } else {
+          console.log('[Content] Setting textarea value and dispatching input event');
+          inputArea.value = prompt;
+          inputArea.dispatchEvent(new Event('input', { bubbles: true }));
+          inputArea.dispatchEvent(new Event('change', { bubbles: true }));
+        }
 
         const getSubmitBtn = () => document.querySelector('button[data-testid="send-button"]') ||
-                             document.querySelector('button[aria-label*="Send"]') ||
-                             document.querySelector('form button[type="submit"]') ||
-                             document.querySelector('button:has(svg)');
+                             document.querySelector('button[aria-label*="Send message"]') ||
+                             document.querySelector('button[aria-label="Send"]') ||
+                             document.querySelector('form button:not([disabled]):has(svg:not(.icon-md))'); // Try to avoid generic icons
 
-        waitForSubmitAndClick(textarea, getSubmitBtn, true);
+        waitForSubmitAndClick(inputArea, getSubmitBtn, true);
       } else {
-        console.error('[Content] ChatGPT textarea not found! Available textareas:');
+        console.error('[Content] ChatGPT input area not found! Available textareas:');
         const allTextareas = document.querySelectorAll('textarea');
         console.log('[Content] Found textareas:', allTextareas.length);
         allTextareas.forEach((ta, i) => {
-          console.log(`[Content] Textarea ${i}:`, ta.placeholder, ta.id, ta.className);
+          console.log(`[Content] Textarea ${i}:`, ta.placeholder, ta.id, ta.className, ta.style.display);
         });
       }
     },
