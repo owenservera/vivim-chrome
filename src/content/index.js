@@ -192,7 +192,11 @@ function setupRuntimeMessageHandling() {
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     console.log('[Content] Received runtime message:', message.type);
-    console.log('[Content] Full message:', JSON.stringify(message, null, 2));
+
+    if (message.type === 'PING') {
+      sendResponse({ success: true, timestamp: Date.now() });
+      return true;
+    }
 
     if (message.type === 'TEST_COMMUNICATION') {
       console.log('[Content] Received test communication:', message);
@@ -255,7 +259,7 @@ function injectPromptIntoPage(provider, prompt) {
                              document.querySelector('form button[type="submit"]') ||
                              document.querySelector('button:has(svg)');
 
-        this.waitForSubmitAndClick(textarea, getSubmitBtn, true);
+        waitForSubmitAndClick(textarea, getSubmitBtn, true);
       } else {
         console.error('[Content] ChatGPT textarea not found! Available textareas:');
         const allTextareas = document.querySelectorAll('textarea');
@@ -277,7 +281,7 @@ function injectPromptIntoPage(provider, prompt) {
                              document.querySelector('button[aria-label*="Send"]') ||
                              document.querySelector('form button[type="submit"]');
         
-        this.waitForSubmitAndClick(textarea, getSubmitBtn, true);
+        waitForSubmitAndClick(textarea, getSubmitBtn, true);
       }
     },
     gemini: (prompt) => {
@@ -292,7 +296,7 @@ function injectPromptIntoPage(provider, prompt) {
                          document.querySelector('button[data-testid*="send"]') ||
                          document.querySelector('form button[type="submit"]');
 
-        this.waitForSubmitAndClick(textarea, getSubmitBtn, true);
+        waitForSubmitAndClick(textarea, getSubmitBtn, true);
       }
     }
   };
@@ -303,4 +307,41 @@ function injectPromptIntoPage(provider, prompt) {
   } else {
     console.warn('[Content] No injection script for provider:', provider);
   }
+}
+
+function waitForSubmitAndClick(textarea, getSubmitBtnFn, fallbackToEnter = true) {
+  let attempts = 0;
+  const maxAttempts = 20; // up to 2 seconds
+
+  function attemptClick() {
+    attempts++;
+    const submitBtn = getSubmitBtnFn();
+    
+    if (submitBtn && !submitBtn.disabled && submitBtn.getAttribute('aria-disabled') !== 'true') {
+      console.log('[Content] Found enabled submit button, clicking it');
+      submitBtn.click();
+      return;
+    }
+    
+    if (attempts < maxAttempts) {
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+      textarea.dispatchEvent(new Event('change', { bubbles: true }));
+      setTimeout(attemptClick, 100);
+    } else {
+      console.log('[Content] No enabled submit button found after polling, simulating Enter key');
+      if (fallbackToEnter) {
+        const enterEvent = new KeyboardEvent('keydown', {
+          bubbles: true,
+          cancelable: true,
+          key: 'Enter',
+          code: 'Enter',
+          keyCode: 13,
+          which: 13
+        });
+        textarea.dispatchEvent(enterEvent);
+      }
+    }
+  }
+
+  setTimeout(attemptClick, 50);
 }

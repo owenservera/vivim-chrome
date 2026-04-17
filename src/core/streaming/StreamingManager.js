@@ -928,7 +928,13 @@ export class BaseSSEParser extends BaseStreamParser {
  * Delta Encoding v1 Parser (ChatGPT style)
  */
 export class DeltaEncodingV1Parser extends BaseStreamParser {
+  constructor(options) {
+    super(options);
+    this.logger = new Logger('DeltaEncodingV1Parser');
+  }
+
   async process(response) {
+    this.logger.debug(`Starting process() for stream ${this.streamId}`);
     const clone = response.clone();
     const reader = clone.body.getReader();
     const decoder = new TextDecoder('utf-8');
@@ -939,16 +945,23 @@ export class DeltaEncodingV1Parser extends BaseStreamParser {
     let currentRole = { value: null };
     let chunkSequence = 0;
     let lastEmittedContent = '';
-    let lastEmitTime = 0;
 
     // SSE parsing state
     let currentEvent = 'message';
     let eventData = '';
 
     try {
+      this.logger.debug(`[DEBUG_STREAM] Starting process() for stream ${this.streamId}. Reader active.`);
       while (!this.isCancelled) {
         const { done, value } = await reader.read();
-        if (done) break;
+        if (done) {
+          this.logger.debug(`[DEBUG_STREAM] Reader signaled DONE for ${this.streamId}`);
+          break;
+        }
+
+        if (value) {
+          this.logger.debug(`[DEBUG_STREAM] Received raw chunk: ${value.length} bytes`);
+        }
 
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
@@ -956,52 +969,65 @@ export class DeltaEncodingV1Parser extends BaseStreamParser {
 
         for (const line of lines) {
           const trimmed = line.trim();
+          if (!trimmed) continue;
 
-          if (trimmed === '') {
-            // Process accumulated event data
-            if (eventData && currentEvent === 'delta') {
-              try {
-                const payload = JSON.parse(eventData);
-                const hadContentChange = this.processDeltaPayload(payload, messageParts, currentModel, currentRole);
-                const reconstructedText = this.reconstructContent(messageParts);
+          this.logger.debug(`[DEBUG_STREAM] SSE Line: ${trimmed.substring(0, 100)}${trimmed.length > 100 ? '...' : ''}`);
 
-                // Only emit chunk if content actually changed and it's been at least 100ms since last emit
-                // This prevents too frequent updates while still being responsive
-                if (hadContentChange && reconstructedText && reconstructedText !== lastEmittedContent) {
-                  const now = Date.now();
-                  if (now - lastEmitTime >= 100) {
-                    chunkSequence++;
-                    this.emitChunk({
-                      content: reconstructedText,
-                      role: currentRole.value || 'assistant',
-                      model: currentModel.value,
-                      seq: chunkSequence,
-                      timestamp: now
-                    });
-                    lastEmittedContent = reconstructedText;
-                    lastEmitTime = now;
-                  }
-                }
-              } catch (e) {
-                console.warn(`[DeltaParser] Parse error:`, e);
-              }
-            }
-
-            // Reset for next event
-            currentEvent = 'message';
-            eventData = '';
-          } else if (trimmed.startsWith('event: ')) {
+          if (trimmed.startsWith('event: ')) {
             currentEvent = trimmed.slice(7).trim();
+            this.logger.debug(`[DEBUG_STREAM] Event: ${currentEvent}`);
           } else if (trimmed.startsWith('data: ')) {
-            eventData = eventData ? eventData + '\n' + trimmed.slice(6) : trimmed.slice(6);
+            const data = trimmed.slice(6);
+            if (data === '[DONE]') {
+              this.logger.debug('[DEBUG_STREAM] Stream [DONE]');
+              break;
+            }
+            
+            eventData = eventData ? eventData + '\n' + data : data;
+
+            try {
+              const payload = JSON.parse(eventData);
+              this.logger.debug(`[DEBUG_STREAM] Successfully parsed JSON payload for ${currentEvent}`);
+              
+              let hadContentChange = false;
+              if (currentEvent === 'delta') {
+                hadContentChange = this.processDeltaPayload(payload, messageParts, currentModel, currentRole);
+              } else if (currentEvent === 'message' || !currentEvent) {
+                if (payload.message) {
+                  hadContentChange = this.processMessagePayload(payload, messageParts, currentModel, currentRole);
+                } else if (payload.o && payload.p) {
+                  hadContentChange = this.processDeltaPayload(payload, messageParts, currentModel, currentRole);
+                }
+              }
+
+              if (hadContentChange) {
+                const reconstructedText = this.reconstructContent(messageParts);
+                chunkSequence++;
+                this.logger.debug(`[DEBUG_STREAM] Emission triggered: seq=${chunkSequence}, len=${reconstructedText.length}`);
+                this.emitChunk({
+                  content: reconstructedText,
+                  role: currentRole.value || 'assistant',
+                  model: currentModel.value,
+                  seq: chunkSequence,
+                  timestamp: Date.now()
+                });
+                lastEmittedContent = reconstructedText;
+              }
+              
+              // Clear on success
+              eventData = '';
+            } catch (e) {
+              this.logger.debug(`[DEBUG_STREAM] JSON partial/invalid (len=${eventData.length}): ${e.message}`);
+            }
           }
         }
       }
 
-      // Send final complete message (only once)
+      // Send final complete message (only if we haven't emitted anything or content is different)
       const finalText = this.reconstructContent(messageParts);
-      if (finalText && finalText !== lastEmittedContent) {
+      if (finalText !== undefined) {
         chunkSequence++;
+        this.logger.debug(`Emitting final chunk ${chunkSequence} (${finalText.length} chars)`);
         this.emitChunk({
           content: finalText,
           role: currentRole.value || 'assistant',
@@ -1015,8 +1041,31 @@ export class DeltaEncodingV1Parser extends BaseStreamParser {
       this.emitComplete();
 
     } catch (error) {
+      this.logger.error(`Error in process() for stream ${this.streamId}:`, error);
       this.emitError(error);
     }
+  }
+
+  processMessagePayload(payload, messageParts, currentModel, currentRole) {
+    let hadContentChange = false;
+    const msg = payload.message;
+    if (!msg) return false;
+
+    if (msg.author?.role) {
+      currentRole.value = msg.author.role;
+    }
+    if (msg.metadata?.model_slug) {
+      currentModel.value = msg.metadata.model_slug;
+    }
+
+    if (msg.content?.parts) {
+      const newParts = msg.content.parts;
+      if (newParts.length !== messageParts.length || newParts.some((p, i) => p !== messageParts[i])) {
+        messageParts.splice(0, messageParts.length, ...(Array.isArray(newParts) ? newParts : [newParts]));
+        hadContentChange = true;
+      }
+    }
+    return hadContentChange;
   }
 
   processDeltaPayload(payload, messageParts, currentModel, currentRole) {
@@ -1026,14 +1075,6 @@ export class DeltaEncodingV1Parser extends BaseStreamParser {
     const path = payload.p;
     const value = payload.v;
 
-    // Track model from metadata
-    if (path === "/message/metadata" && op === "add" && value?.model_slug) {
-      currentModel.value = value.model_slug;
-    }
-    if (path === "/message/author/role") {
-      currentRole.value = value;
-    }
-
     // Handle batched patch operations
     if (op === "patch" && Array.isArray(value)) {
       for (const subOp of value) {
@@ -1041,60 +1082,52 @@ export class DeltaEncodingV1Parser extends BaseStreamParser {
         const subOpType = subOp.o;
         const subValue = subOp.v;
 
-        // Track role
         if (subPath === "/message/author/role") {
           currentRole.value = subValue;
         }
 
-        // Track model
         if (subPath === "/message/metadata" && subOpType === "add" && subValue?.model_slug) {
           currentModel.value = subValue.model_slug;
         }
 
-        // Handle content updates
         if (subPath === "/message/content/parts" && (subOpType === "replace" || subOpType === "add")) {
-          const oldLength = messageParts.length;
           messageParts.splice(0, messageParts.length, ...(Array.isArray(subValue) ? subValue : [subValue]));
-          if (messageParts.length !== oldLength || messageParts.some((part, i) => part !== (Array.isArray(subValue) ? subValue[i] : subValue))) {
-            hadContentChange = true;
-          }
+          hadContentChange = true;
         } else if (subPath && subPath.startsWith("/message/content/parts/")) {
           const match = subPath.match(/\/message\/content\/parts\/(\d+)/);
           if (match) {
             const idx = parseInt(match[1], 10);
-            const oldValue = messageParts[idx];
+            const valToAppend = typeof subValue === 'string' ? subValue : (subValue?.parts?.[0] || "");
             if (subOpType === "append") {
-              messageParts[idx] = (messageParts[idx] || "") + subValue;
+              messageParts[idx] = (messageParts[idx] || "") + valToAppend;
             } else if (subOpType === "replace" || subOpType === "add") {
               messageParts[idx] = subValue;
             }
-            if (messageParts[idx] !== oldValue) {
-              hadContentChange = true;
-            }
+            hadContentChange = true;
           }
         }
       }
     } else {
-      // Single operations
+      if (path === "/message/author/role") {
+        currentRole.value = value;
+      }
+      if (path === "/message/metadata" && op === "add" && value?.model_slug) {
+        currentModel.value = value.model_slug;
+      }
       if (path === "/message/content/parts" && (op === "replace" || op === "add")) {
-        const oldLength = messageParts.length;
         messageParts.splice(0, messageParts.length, ...(Array.isArray(value) ? value : [value]));
-        if (messageParts.length !== oldLength || messageParts.some((part, i) => part !== (Array.isArray(value) ? value[i] : value))) {
-          hadContentChange = true;
-        }
+        hadContentChange = true;
       } else if (path && path.startsWith("/message/content/parts/")) {
         const match = path.match(/\/message\/content\/parts\/(\d+)/);
         if (match) {
           const idx = parseInt(match[1], 10);
-          const oldValue = messageParts[idx];
+          const valToAppend = typeof value === 'string' ? value : (value?.parts?.[0] || "");
           if (op === "append") {
-            messageParts[idx] = (messageParts[idx] || "") + value;
+            messageParts[idx] = (messageParts[idx] || "") + valToAppend;
           } else if (op === "replace" || op === "add") {
             messageParts[idx] = value;
           }
-          if (messageParts[idx] !== oldValue) {
-            hadContentChange = true;
-          }
+          hadContentChange = true;
         }
       }
     }
@@ -1103,7 +1136,7 @@ export class DeltaEncodingV1Parser extends BaseStreamParser {
   }
 
   reconstructContent(messageParts) {
-    return messageParts.filter(p => typeof p === 'string').join('\n\n');
+    return messageParts.filter(p => typeof p === 'string').join('');
   }
 }
 

@@ -138,7 +138,7 @@ export class ChatGPTProvider extends MixinProvider {
   }
 
   async onResponse(ctx) {
-    this.logger.info('Intercepted streaming response');
+    this.logger.info(`Intercepted ChatGPT response: ${ctx.url}`);
 
     if (window.dataFeedManager?.isEnabled()) {
       window.dataFeedManager.emit('provider:response', {
@@ -151,34 +151,55 @@ export class ChatGPTProvider extends MixinProvider {
     }
 
     if (!this.streamingManager) {
+      this.logger.debug('Initializing StreamingManager');
       this.streamingManager = new StreamingManager({
-        send: (action, data) => this.sendToBridge(action, data)
+        send: (action, data) => {
+          this.logger.debug(`Sending bridge action: ${action}`, data);
+          this.sendToBridge(action, data);
+        }
       }, {
         dataFeedManager: window.dataFeedManager
       });
     }
 
     const streamId = 'chatgpt_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
+    const format = 'delta-encoding-v1';
+    
+    this.logger.info(`Starting stream processing. ID: ${streamId}, Format: ${format}`);
+
+    // Create a proxy to log raw chunks if needed
+    const originalResponse = ctx.response;
+    const loggingStream = new TransformStream({
+      transform(chunk, controller) {
+        console.log(`[DEBUG_STREAM] Raw chunk (${chunk.length} bytes):`, new TextDecoder().decode(chunk).substring(0, 100));
+        controller.enqueue(chunk);
+      }
+    });
+    
+    // We can't easily replace the response body in the intercepted fetch without more work, 
+    // but we can at least log what we pass to the manager.
 
     try {
       await this.streamingManager.processStream({
         streamId,
         response: ctx.response,
-        format: 'openai-sse',
+        format: format,
         metadata: {
           provider: 'chatgpt',
           model: 'unknown'
         }
       });
+      this.logger.info(`Stream processing completed: ${streamId}`);
     } catch (e) {
-      this.logger.error('Streaming error:', e);
+      this.logger.error(`Streaming error for ${streamId}:`, e);
 
       try {
+        this.logger.info(`Attempting error recovery for ${streamId}`);
         await this.handleProviderError(e, async () => {
           return await this.streamingManager.processStream({
             streamId: streamId + '_retry',
             response: ctx.response,
-            format: 'openai-sse',
+            format: format,
             metadata: {
               provider: 'chatgpt',
               model: 'unknown'
@@ -186,7 +207,7 @@ export class ChatGPTProvider extends MixinProvider {
           });
         }, () => this.refreshAuthTokens());
       } catch (recoveryError) {
-        this.logger.error('Error recovery failed:', recoveryError);
+        this.logger.error(`Error recovery failed for ${streamId}:`, recoveryError);
         this.sendToBridge('streamComplete', { streamId, error: recoveryError.message });
       }
     }

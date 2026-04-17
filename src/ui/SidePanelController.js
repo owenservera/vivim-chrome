@@ -101,6 +101,15 @@ export class SidePanelController {
       });
     }
 
+    if (chrome.tabs && chrome.tabs.onUpdated) {
+      chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+        if (tabId === this.currentTabId && changeInfo.status === 'complete') {
+          this.logger.info(`[SidePanel] Tab ${tabId} refreshed/updated, reloading conversation...`);
+          this.loadConversation();
+        }
+      });
+    }
+
     this.bindHeaderButtons();
     this.bindToolbar();
     this.flushPendingUpdates();
@@ -347,40 +356,48 @@ async initializeWithCurrentTab() {
 
     // Only attempt injection if we have a valid tab ID
     if (!this.currentTabId) {
-      console.error('[SidePanel] No currentTabId available for injection');
-      this.showToast('No active tab found for injection');
-      return;
+      this.logger.error('[SidePanel] No currentTabId available for injection');
+      // Try to find a valid provider tab as fallback
+      const providerTabs = await chrome.tabs.query({ url: [`https://*/*${this.currentProvider.id}*`, "https://chatgpt.com/*", "https://chat.com/*", "https://claude.ai/*", "https://gemini.google.com/*"] });
+      if (providerTabs.length > 0) {
+        this.currentTabId = providerTabs[0].id;
+        this.logger.info(`[SidePanel] Found fallback provider tab: ${this.currentTabId}`);
+      } else {
+        this.showToast('No active AI provider tab found. Please open ChatGPT, Claude, or Gemini.');
+        return;
+      }
     }
 
     try {
-      console.log('[SidePanel] Sending prompt to content script for injection');
-      console.log('[SidePanel] Current tab ID:', this.currentTabId);
-      console.log('[SidePanel] Current provider:', this.currentProvider.id);
-      console.log('[SidePanel] Prompt text length:', text.length);
+      this.logger.info(`[SidePanel] Attempting injection into tab ${this.currentTabId} for ${this.currentProvider.id}`);
+      
+      // Ping the content script first to see if it's alive
+      try {
+        const ping = await chrome.tabs.sendMessage(this.currentTabId, { type: 'PING' });
+        this.logger.debug('[SidePanel] Content script ping success:', ping);
+      } catch (pingError) {
+        this.logger.warn('[SidePanel] Content script not responding:', pingError.message);
+        this.showToast('Connection lost. Please refresh the AI provider page (ChatGPT/Claude/Gemini).');
+        return;
+      }
 
       // Send message to content script to inject the prompt into the webpage
-      const injectionPromise = chrome.tabs.sendMessage(this.currentTabId, {
+      const response = await chrome.tabs.sendMessage(this.currentTabId, {
         type: 'INJECT_PROMPT',
         provider: this.currentProvider.id,
         prompt: text
       });
 
-      // Add timeout to the promise
-      const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('Injection timeout')), 5000);
-      });
-
-      Promise.race([injectionPromise, timeoutPromise]).then((response) => {
-        console.log('[SidePanel] Prompt injection message sent successfully, response:', response);
-      }).catch((error) => {
-        console.error('[SidePanel] Failed to send injection message:', error);
-        console.error('[SidePanel] Error details:', error.message, error.stack);
-        this.showToast('Failed to inject prompt: ' + error.message);
-      });
+      this.logger.info('[SidePanel] Prompt injection response:', response);
+      if (response && response.success) {
+        this.promptInput.value = '';
+        this.onInputChange();
+      } else if (response && response.error) {
+        this.showToast('Injection failed: ' + response.error);
+      }
     } catch (error) {
-      console.error('[SidePanel] Injection setup failed:', error);
-      console.error('[SidePanel] Setup error details:', error.message, error.stack);
-      this.showToast('Injection setup failed: ' + error.message);
+      this.logger.error('[SidePanel] Injection failed:', error);
+      this.showToast('Could not connect to page. Please refresh the tab.');
     }
   }
 
