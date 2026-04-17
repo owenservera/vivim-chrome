@@ -186,21 +186,64 @@ async function buildEntries() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// PROCESS HTML ASSETS - Extract and minify CSS, optimize HTML
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function processHtmlAssets() {
+  log('info', 'Processing HTML assets...');
+
+  const packageInfo = JSON.parse(readFileSync(join(__dirname, 'package.json'), 'utf8'));
+  const buildInfo = {
+    version: packageInfo.version,
+    buildTime: new Date().toISOString(),
+    environment: isWatch ? 'development' : 'production'
+  };
+
+  for (const htmlFile of STATIC_ASSETS.html) {
+    const src = join(__dirname, htmlFile);
+    const dst = join(outdir, htmlFile);
+
+    if (existsSync(src)) {
+      let content = readFileSync(src, 'utf8');
+
+      // Add build metadata comment
+      const buildComment = `<!-- VIVIM Extension v${buildInfo.version} - Built: ${buildInfo.buildTime} (${buildInfo.environment}) -->`;
+      content = content.replace(/(<!DOCTYPE html>)/, '$1\n' + buildComment);
+
+      // Extract and minify inline CSS
+      content = content.replace(/<style>([\s\S]*?)<\/style>/g, (match, css) => {
+        const minifiedCss = css
+          .replace(/\/\*[\s\S]*?\*\//g, '') // Remove comments
+          .replace(/\s+/g, ' ') // Collapse whitespace
+          .replace(/\s*([{}:;,>+~])\s*/g, '$1') // Remove spaces around selectors
+          .trim();
+
+        return `<style>${minifiedCss}</style>`;
+      });
+
+      // Minify HTML (basic minification)
+      if (!isWatch) {
+        content = content
+          .replace(/>\s+</g, '><') // Remove whitespace between tags
+          .replace(/\s+/g, ' ') // Collapse multiple spaces
+          .trim();
+      }
+
+      writeFileSync(dst, content, 'utf8');
+      log('success', `Processed: ${htmlFile} (${content.length} bytes)`);
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // COPY STATIC ASSETS
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function copyStaticAssets() {
   log('info', 'Copying static assets...');
-  
-  // Copy HTML files
-  for (const html of STATIC_ASSETS.html) {
-    const src = join(__dirname, html);
-    const dst = join(outdir, html);
-    if (existsSync(src)) {
-      cpSync(src, dst);
-      log('success', `Copied: ${html}`);
-    }
-  }
+
+  // Process HTML files (with CSS extraction and minification)
+  processHtmlAssets();
   
   // Copy manifest
   const manifestSrc = join(__dirname, STATIC_ASSETS.manifest);

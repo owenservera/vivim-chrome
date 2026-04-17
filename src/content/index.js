@@ -3,7 +3,14 @@ import { ContentScriptFetch } from './fetch/ContentScriptFetch.js';
 import { stealthFetchManager } from './fetch/StealthFetchManager.js';
 
 (function init() {
-  if (window.__vivimContentInitialized) return;
+  console.log('[Content] ===== VIVIM CONTENT SCRIPT LOADING =====');
+  console.log('[Content] Current URL:', window.location.href);
+  console.log('[Content] Chrome runtime available:', typeof chrome !== 'undefined' && !!chrome.runtime);
+
+  if (window.__vivimContentInitialized) {
+    console.log('[Content] Content script already initialized, skipping');
+    return;
+  }
   window.__vivimContentInitialized = true;
 
   console.log('[Content] Initializing modular content script...');
@@ -35,6 +42,7 @@ import { stealthFetchManager } from './fetch/StealthFetchManager.js';
   setupWebBridge();
   setupSaveButtonInjection();
   setupContentScriptFetch();
+  setupRuntimeMessageHandling();
 
   window.__vivimTelemetry.trackAction('content_loaded');
   console.log('[Content] Initialization complete');
@@ -46,25 +54,34 @@ function setupWebBridge() {
   
   window.addEventListener('message', (event) => {
     const data = event.data;
+    console.log('[Content] Message event:', data);
     
     // Only process vivim-bridge messages from the MAIN world
     if (!data || data.type !== 'vivim-bridge' || data.communicationId !== 'vivim-bridge') {
       return;
     }
     
-    console.log('[Content] Bridge event received:', data.action);
+    // Ignore responses to our own messages (no action = it's a response)
+    if (!data.action) {
+      console.log('[Content] Ignoring response message');
+      return;
+    }
+    
+    console.log('[Content] Bridge event received:', data.action, 'requestId:', data.requestId);
     
     // Handle Handshake
     if (data.action === '__handshake__') {
-      console.log('[Content] Responding to handshake');
-      window.postMessage({
+      console.log('[Content] Responding to handshake, requestId:', data.id);
+      const response = {
         type: 'vivim-bridge',
         communicationId: 'vivim-bridge',
         requestId: data.id,
         success: true,
         data: { success: true, timestamp: Date.now() },
         timestamp: Date.now()
-      }, '*');
+      };
+      console.log('[Content] Sending handshake response:', response);
+      window.postMessage(response, '*');
       return;
     }
     
@@ -167,5 +184,123 @@ function setupContentScriptFetch() {
     console.log('[Content] Content script fetch initialized');
   } catch (error) {
     console.error('[Content] Failed to initialize content script fetch:', error);
+  }
+}
+
+function setupRuntimeMessageHandling() {
+  console.log('[Content] Setting up runtime message handling...');
+
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    console.log('[Content] Received runtime message:', message.type);
+    console.log('[Content] Full message:', JSON.stringify(message, null, 2));
+
+    if (message.type === 'TEST_COMMUNICATION') {
+      console.log('[Content] Received test communication:', message);
+      sendResponse({ success: true, message: 'Hello from content script', url: window.location.href });
+      return true;
+    }
+
+    if (message.type === 'INJECT_PROMPT') {
+      console.log('[Content] Injecting prompt for provider:', message.provider);
+      console.log('[Content] Prompt text length:', message.prompt?.length || 0);
+
+      try {
+        injectPromptIntoPage(message.provider, message.prompt);
+        console.log('[Content] Prompt injection completed successfully');
+        sendResponse({ success: true });
+      } catch (error) {
+        console.error('[Content] Failed to inject prompt:', error);
+        console.error('[Content] Injection error details:', error.message, error.stack);
+        sendResponse({ success: false, error: error.message });
+      }
+
+      return true; // Keep the message channel open for async response
+    }
+  });
+}
+
+function injectPromptIntoPage(provider, prompt) {
+  console.log('[Content] Starting prompt injection for provider:', provider);
+  console.log('[Content] Prompt text:', prompt.substring(0, 50) + (prompt.length > 50 ? '...' : ''));
+
+  const injectionScripts = {
+    chatgpt: (prompt) => {
+      console.log('[Content] Looking for ChatGPT textarea...');
+
+      // Try multiple selectors for ChatGPT textarea
+      let textarea = document.querySelector('form textarea') ||
+                    document.querySelector('textarea[placeholder*="Ask"]') ||
+                    document.querySelector('textarea[placeholder*="Send a message"]') ||
+                    document.querySelector('textarea[data-testid*="prompt"]') ||
+                    document.querySelector('#prompt-textarea') ||
+                    document.querySelector('textarea');
+
+      console.log('[Content] Found ChatGPT textarea:', !!textarea);
+      if (textarea) {
+        console.log('[Content] Textarea element:', textarea);
+        console.log('[Content] Textarea placeholder:', textarea.placeholder);
+      }
+
+      if (textarea) {
+        console.log('[Content] Setting textarea value and dispatching input event');
+        textarea.value = prompt;
+        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+        textarea.dispatchEvent(new Event('change', { bubbles: true }));
+
+        // Also try to focus the textarea
+        textarea.focus();
+
+        const getSubmitBtn = () => document.querySelector('button[data-testid="send-button"]') ||
+                             document.querySelector('button[aria-label*="Send"]') ||
+                             document.querySelector('form button[type="submit"]') ||
+                             document.querySelector('button:has(svg)');
+
+        this.waitForSubmitAndClick(textarea, getSubmitBtn, true);
+      } else {
+        console.error('[Content] ChatGPT textarea not found! Available textareas:');
+        const allTextareas = document.querySelectorAll('textarea');
+        console.log('[Content] Found textareas:', allTextareas.length);
+        allTextareas.forEach((ta, i) => {
+          console.log(`[Content] Textarea ${i}:`, ta.placeholder, ta.id, ta.className);
+        });
+      }
+    },
+    claude: (prompt) => {
+      const textarea = document.querySelector('[data-testid="prompt-textarea"]') ||
+                      document.querySelector('textarea[placeholder*="Ask Claude"]') ||
+                      document.querySelector('form textarea');
+      if (textarea) {
+        textarea.value = prompt;
+        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+
+        const getSubmitBtn = () => document.querySelector('button[data-testid="send-button"]') ||
+                             document.querySelector('button[aria-label*="Send"]') ||
+                             document.querySelector('form button[type="submit"]');
+        
+        this.waitForSubmitAndClick(textarea, getSubmitBtn, true);
+      }
+    },
+    gemini: (prompt) => {
+      const textarea = document.querySelector('rich-textarea')?.shadowRoot?.querySelector('textarea') ||
+                      document.querySelector('textarea[aria-label*="Ask Gemini"]') ||
+                      document.querySelector('textarea[placeholder*="Ask Gemini"]');
+      if (textarea) {
+        textarea.value = prompt;
+        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+
+        const getSubmitBtn = () => document.querySelector('button[aria-label*="Send"]') ||
+                         document.querySelector('button[data-testid*="send"]') ||
+                         document.querySelector('form button[type="submit"]');
+
+        this.waitForSubmitAndClick(textarea, getSubmitBtn, true);
+      }
+    }
+  };
+
+  const injectScript = injectionScripts[provider];
+  if (injectScript) {
+    injectScript(prompt);
+  } else {
+    console.warn('[Content] No injection script for provider:', provider);
   }
 }

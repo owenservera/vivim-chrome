@@ -41,7 +41,7 @@ export class GeminiProvider extends BaseProvider {
         messageFormat: 'google'
       },
       interceptPatterns: {
-        request: /\/generateContent\?/
+        request: /\/(?:generateContent|streamGenerateContent)\?/
       },
       stealth: {
         enabled: true,
@@ -59,7 +59,24 @@ export class GeminiProvider extends BaseProvider {
     this.securityManager = null;
     this.secureStorage = null;
 
-    this.initializeSecurity();
+    this.initSecurityLater();
+  }
+
+  /**
+   * Initialize security features later when StorageManager is available
+   */
+  async initSecurityLater() {
+    // Wait for StorageManager to be available
+    const checkStorage = () => {
+      return typeof window !== 'undefined' && window.storageManager;
+    };
+
+    if (checkStorage()) {
+      await this.initializeSecurity();
+    } else {
+      // Retry after a short delay
+      setTimeout(() => this.initSecurityLater(), 100);
+    }
   }
 
   /**
@@ -110,35 +127,54 @@ export class GeminiProvider extends BaseProvider {
     // Extract auth tokens from request
     this.extractAuthFromRequest(ctx);
 
-    // Extract user message from request body
+    // Extract user message from Gemini request format
     if (ctx.body) {
       try {
         const bodyStr = typeof ctx.body === 'string' ? ctx.body : new TextDecoder().decode(ctx.body);
         const payload = JSON.parse(bodyStr);
 
-        // Extract message content from Gemini request format
+        // Extract message content from Gemini API format
+        // Gemini uses: { contents: [{ role: "user", parts: [{ text: "message" }] }] }
         if (payload.contents && Array.isArray(payload.contents)) {
-          const userContent = payload.contents
+          // Find the last user message in the conversation
+          const userContents = payload.contents
             .filter(content => content.role === 'user')
-            .map(content => {
-              if (content.parts && Array.isArray(content.parts)) {
-                return content.parts
-                  .filter(part => part.text)
-                  .map(part => part.text)
-                  .join(' ');
+            .slice(-1); // Get the last user message
+
+          if (userContents.length > 0) {
+            const userContentObj = userContents[0];
+            const userContent = this.extractTextFromParts(userContentObj.parts || []);
+
+            if (userContent) {
+              this.logger.info(`Extracted Gemini user prompt (${userContent.length} chars)`);
+
+              // Extract conversation context for data feed
+              const conversationContext = this.extractConversationContext(payload.contents);
+
+              // Emit to data feed
+              if (window.dataFeedManager?.isEnabled()) {
+                window.dataFeedManager.emit('message:sent', {
+                  provider: 'gemini',
+                  role: 'user',
+                  content: userContent,
+                  contentLength: userContent.length,
+                  conversationId: payload.conversationId || null,
+                  generationConfig: payload.generationConfig || null,
+                  conversationHistoryLength: payload.contents.length,
+                  hasSystemInstruction: !!payload.systemInstruction,
+                  hasTools: !!(payload.tools && payload.tools.length > 0),
+                  hasSafetySettings: !!(payload.safetySettings && payload.safetySettings.length > 0)
+                });
               }
-              return '';
-            })
-            .join('\n');
 
-          if (userContent) {
-            this.logger.info(`Extracted Gemini user prompt (${userContent.length} chars)`);
-
-            this.sendToBridge('userPrompt', {
-              role: 'user',
-              content: userContent,
-              conversationId: payload.conversationId || null
-            });
+              this.sendToBridge('userPrompt', {
+                role: 'user',
+                content: userContent,
+                conversationId: payload.conversationId || null,
+                generationConfig: payload.generationConfig || null,
+                conversationContext: conversationContext
+              });
+            }
           }
         }
       } catch (e) {
@@ -217,9 +253,23 @@ export class GeminiProvider extends BaseProvider {
   async onResponse(ctx) {
     this.logger.info('Intercepted Gemini streaming response');
 
+    // Emit response event to data feed
+    if (window.dataFeedManager?.isEnabled()) {
+      window.dataFeedManager.emit('provider:response', {
+        provider: 'gemini',
+        url: ctx.url,
+        responseStatus: ctx.response.status,
+        responseHeaders: Object.fromEntries(ctx.response.headers.entries()),
+        contentType: ctx.response.headers.get('content-type'),
+        isStreaming: ctx.response.headers.get('content-type')?.includes('text/event-stream')
+      });
+    }
+
     if (!this.streamingManager) {
       this.streamingManager = new StreamingManager({
         send: (action, data) => this.sendToBridge(action, data)
+      }, {
+        dataFeedManager: window.dataFeedManager
       });
     }
 
@@ -232,7 +282,7 @@ export class GeminiProvider extends BaseProvider {
         format: 'gemini-sse',
         metadata: {
           provider: 'gemini',
-          model: 'gemini-pro'
+          model: this.extractModelFromUrl(ctx.url) || 'gemini-pro'
         }
       });
     } catch (e) {
@@ -247,7 +297,7 @@ export class GeminiProvider extends BaseProvider {
             format: 'gemini-sse',
             metadata: {
               provider: 'gemini',
-              model: 'gemini-pro'
+              model: this.extractModelFromUrl(ctx.url) || 'gemini-pro'
             }
           });
         });
@@ -274,6 +324,54 @@ export class GeminiProvider extends BaseProvider {
     }
 
     return headers;
+  }
+
+  /**
+   * Extract text content from Gemini parts array
+   */
+  extractTextFromParts(parts) {
+    if (!Array.isArray(parts)) return '';
+
+    return parts
+      .filter(part => typeof part.text === 'string')
+      .map(part => part.text)
+      .join(' ')
+      .trim();
+  }
+
+  /**
+   * Extract conversation context from contents array
+   */
+  extractConversationContext(contents) {
+    if (!Array.isArray(contents)) return null;
+
+    // Return summary of conversation for context
+    const messageCount = contents.length;
+    const userMessages = contents.filter(c => c.role === 'user').length;
+    const modelMessages = contents.filter(c => c.role === 'model').length;
+
+    return {
+      totalMessages: messageCount,
+      userMessages,
+      modelMessages,
+      hasAlternatingRoles: this.validateConversationFlow(contents)
+    };
+  }
+
+  /**
+   * Validate that conversation follows proper user-model alternation
+   */
+  validateConversationFlow(contents) {
+    if (!Array.isArray(contents) || contents.length < 2) return true;
+
+    let expectedRole = 'user';
+    for (const content of contents) {
+      if (content.role !== expectedRole) {
+        return false;
+      }
+      expectedRole = expectedRole === 'user' ? 'model' : 'user';
+    }
+    return true;
   }
 
   /**
@@ -412,6 +510,23 @@ export class GeminiProvider extends BaseProvider {
       this.logger.warn(`Retry attempt ${attempt} failed:`, error);
       return await this.retryWithBackoff(callback, attempt + 1);
     }
+  }
+
+  /**
+   * Extract model name from URL
+   */
+  extractModelFromUrl(url) {
+    try {
+      const urlObj = new URL(url);
+      const pathParts = urlObj.pathname.split('/');
+      const modelsIndex = pathParts.indexOf('models');
+      if (modelsIndex !== -1 && modelsIndex < pathParts.length - 1) {
+        return pathParts[modelsIndex + 1];
+      }
+    } catch (e) {
+      // Ignore URL parsing errors
+    }
+    return null;
   }
 
   /**

@@ -46,8 +46,24 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["dist/**/*.js"],
-      "matches": ["https://chatgpt.com/*", "https://chat.com/*", "https://claude.ai/*", "https://gemini.google.com/*"]
+      "resources": [
+        "**/*.js",
+        "test-page.html"
+      ],
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://chat.com/*",
+        "https://claude.ai/*",
+        "https://gemini.google.com/*"
+      ]
+    },
+    {
+      "resources": [
+        "test-page.html"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
     }
   ]
 }

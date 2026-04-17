@@ -9,6 +9,8 @@ import { MessageValidator } from '../core/messaging/MessageValidator.js';
 import { TabManager } from './services/TabManager.js';
 import { ConversationManager } from './services/ConversationManager.js';
 import { DestinationManager } from './services/DestinationManager.js';
+import { ApiStreamService } from './services/ApiStreamService.js';
+import { globalDataFeedManager } from '../core/storage/DataFeedManager.js';
 
 const logger = new Logger('Background');
 const messageBus = new MessageBus();
@@ -33,6 +35,7 @@ const services = new Map();
 const tabManager = new TabManager(messageBus);
 const conversationManager = new ConversationManager(messageBus);
 const destinationManager = new DestinationManager(messageBus);
+const apiStreamService = new ApiStreamService(messageBus);
 
 // Wire services
 conversationManager.setDestinationManager(destinationManager);
@@ -40,29 +43,29 @@ conversationManager.setDestinationManager(destinationManager);
 services.set('tabManager', tabManager);
 services.set('conversationManager', conversationManager);
 services.set('destinationManager', destinationManager);
+services.set('apiStreamService', apiStreamService);
 
-// Handle incoming messages from content scripts and UI
-const ASYNC_RESPONSE_TYPES = new Set([
-  'GET_CONVERSATION',            // async: needs response after storage lookup
-  'GET_CONVERSATION_HISTORY',
-  'SAVE_FROM_DOM',
-  'CLEAR_CONVERSATION',
-  'START_NEW_CONVERSATION',
-  'REGISTER_DESTINATION',        // sync but guard route sends response above
-  'PING'
-]);
+messageBus.on('*', (message, sender) => {
+  logger.debug('Wildcard handler caught:', message.type);
+});
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  logger.debug('Received message:', message.type, message);
+  console.log('[Background] Received message:', message.type, message);
 
   if (message.type === 'REGISTER_DESTINATION') {
     destinationManager.registerDestination(message.id, message.config);
     sendResponse({ ok: true });
-    return;
+    return true;
+  }
+
+  if (message.type === 'EXPORT_ALL_CONVERSATIONS') {
+    conversationManager.exportAllConversations()
+      .then(data => sendResponse({ data }))
+      .catch(error => sendResponse({ error: error.message }));
+    return true;
   }
 
   if (message.type === 'PING') {
-    // Automatically register the sender as a destination if it's a UI component
     if (message.component === 'sidepanel' || message.component === 'options') {
       destinationManager.registerDestination(message.component);
     }
@@ -72,24 +75,54 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       timestamp: Date.now(),
       services: Array.from(services.keys())
     });
-    return;
+    return true;
   }
 
-  // Route message through the bus
-  messageBus.emit(message)
+  if (message.type === 'API_STREAM_CONFIG') {
+    apiStreamService.saveConfig(message.config)
+      .then(() => sendResponse({ ok: true }))
+      .catch(error => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
+  if (message.type === 'API_STREAM_GET_CONFIG') {
+    sendResponse(apiStreamService.getConfig());
+    return true;
+  }
+
+  if (message.type === 'API_STREAM_GET_STATUS') {
+    sendResponse(apiStreamService.getStatus());
+    return true;
+  }
+
+  if (message.type === 'API_STREAM_SET_ENABLED') {
+    apiStreamService.setEnabled(message.enabled);
+    sendResponse({ ok: true });
+    return true;
+  }
+
+  if (message.type === 'API_STREAM_FORCE_SYNC') {
+    apiStreamService.forceSync(message.messages)
+      .then(() => sendResponse({ ok: true }))
+      .catch(error => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
+  messageBus.emit(message, sender)
     .then(result => {
+      console.log('[Background] messageBus.emit result:', message.type, result);
       if (message.needsResponse) {
         sendResponse(result);
       }
     })
     .catch(error => {
-      logger.error('Message handling failed:', error);
+      console.error('[Background] Message handling error:', message.type, error);
       if (message.needsResponse) {
         sendResponse({ error: error.message });
       }
     });
 
-  return ASYNC_RESPONSE_TYPES.has(message.type);
+  return true;
 });
 
 // Side panel setup
@@ -105,6 +138,14 @@ chrome.action.onClicked.addListener((tab) => {
 // Startup initialization
 async function init() {
   logger.info('Initializing modular service worker...');
+
+  // Initialize data feed manager
+  try {
+    await globalDataFeedManager.initialize();
+    logger.info('Data feed manager initialized');
+  } catch (error) {
+    logger.error('Failed to initialize data feed manager:', error);
+  }
 
   // Initialize all services
   for (const [name, service] of services) {

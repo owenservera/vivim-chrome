@@ -22,7 +22,21 @@ export async function launchExtension() {
   }
 
   const extensionId = await serviceWorker.evaluate(() => chrome.runtime.id);
+
   const page = await context.newPage();
+  const testUrl = `chrome-extension://${extensionId}/test-page.html`;
+
+  // Try to navigate to the test page
+  try {
+    const response = await page.goto(testUrl, { timeout: 5000 });
+    if (response) {
+      console.log('Navigation successful, status:', response.status());
+    } else {
+      console.log('Navigation returned null response');
+    }
+  } catch (error) {
+    console.log('Navigation failed:', error.message);
+  }
 
   return { context, page, extensionId };
 }

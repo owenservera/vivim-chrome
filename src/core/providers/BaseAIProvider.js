@@ -53,7 +53,9 @@ export class BaseInterceptor {
    */
   initStreamingManager() {
     if (!this.streamingManager) {
-      this.streamingManager = new StreamingManager(window.__VIVIM_BRIDGE);
+      this.streamingManager = new StreamingManager(window.__VIVIM_BRIDGE, {
+        dataFeedManager: typeof window !== 'undefined' ? window.dataFeedManager : null
+      });
     }
   }
 

@@ -1,0 +1,177 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1776429704122,
+  "projectRoot": "C:\\0-BlackBoxProject-0\\vivim-app-og\\vivim-app\\extensions\\chrome\\poc",
+  "techStack": {
+    "languages": [
+      {
+        "name": "JavaScript/TypeScript",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "package.json"
+        ]
+      }
+    ],
+    "frameworks": [
+      {
+        "name": "esbuild",
+        "version": "0.20.0",
+        "category": "build"
+      },
+      {
+        "name": "@playwright/test",
+        "version": "1.50.0",
+        "category": "testing"
+      }
+    ],
+    "packageManager": "npm",
+    "runtime": null
+  },
+  "build": {
+    "buildCommand": "npm run build",
+    "testCommand": "npm test",
+    "lintCommand": null,
+    "devCommand": "npm run dev",
+    "scripts": {
+      "build": "node build.mjs",
+      "build:fast": "node build.mjs --no-test",
+      "dev": "node dev.mjs --watch",
+      "dev:test": "node dev.mjs --watch --test",
+      "dev:debug": "node dev.mjs --watch --debug",
+      "test": "node test/runner.mjs",
+      "test:dev": "node dev.mjs --test",
+      "test:e2e": "playwright test",
+      "test:e2e:headed": "playwright test --headed",
+      "test:e2e:ui": "playwright test --ui",
+      "clean": "rm -rf dist"
+    }
+  },
+  "conventions": {
+    "namingStyle": null,
+    "importStyle": null,
+    "testPattern": null,
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [
+      "docs",
+      "src",
+      "test"
+    ],
+    "gitBranches": {
+      "defaultBranch": "master",
+      "branchingStrategy": null
+    }
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "archive": {
+      "path": "archive",
+      "purpose": null,
+      "fileCount": 0,
+      "lastAccessed": 1776429703921,
+      "keyFiles": []
+    },
+    "dist": {
+      "path": "dist",
+      "purpose": "Distribution/build output",
+      "fileCount": 3,
+      "lastAccessed": 1776429703927,
+      "keyFiles": [
+        "background.js",
+        "manifest.json",
+        "sidepanel.html"
+      ]
+    },
+    "docs": {
+      "path": "docs",
+      "purpose": "Documentation",
+      "fileCount": 1,
+      "lastAccessed": 1776429703988,
+      "keyFiles": [
+        "gemini-data-models.md"
+      ]
+    },
+    "icons": {
+      "path": "icons",
+      "purpose": null,
+      "fileCount": 4,
+      "lastAccessed": 1776429703989,
+      "keyFiles": [
+        "icon-128.png",
+        "icon-16.png",
+        "icon-32.png",
+        "icon-48.png"
+      ]
+    },
+    "playwright-report": {
+      "path": "playwright-report",
+      "purpose": null,
+      "fileCount": 2,
+      "lastAccessed": 1776429703990,
+      "keyFiles": [
+        "index.html",
+        "results.json"
+      ]
+    },
+    "src": {
+      "path": "src",
+      "purpose": "Source code",
+      "fileCount": 0,
+      "lastAccessed": 1776429703991,
+      "keyFiles": []
+    },
+    "test": {
+      "path": "test",
+      "purpose": "Test files",
+      "fileCount": 7,
+      "lastAccessed": 1776429703993,
+      "keyFiles": [
+        "bridge-config.test.js",
+        "bridge-protocol.test.js",
+        "messaging.test.js",
+        "runner.mjs",
+        "storage.test.js"
+      ]
+    },
+    "test-results": {
+      "path": "test-results",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1776429703994,
+      "keyFiles": []
+    },
+    "playwright-report\\data": {
+      "path": "playwright-report\\data",
+      "purpose": "Data files",
+      "fileCount": 9,
+      "lastAccessed": 1776429704001,
+      "keyFiles": [
+        "02fd4af5dae7aed193015325269f2c70d1f23f71.md",
+        "11febc8309f16cef6f2b4f29e1c82fc4e1b64e77.md",
+        "4aa1bc1d5f6eb88d59b0ee6d1587f9a19ecb6ae2.md"
+      ]
+    },
+    "src\\config": {
+      "path": "src\\config",
+      "purpose": "Configuration files",
+      "fileCount": 1,
+      "lastAccessed": 1776429704003,
+      "keyFiles": [
+        "provider-icons.js"
+      ]
+    },
+    "src\\utils": {
+      "path": "src\\utils",
+      "purpose": "Utility functions",
+      "fileCount": 0,
+      "lastAccessed": 1776429704004,
+      "keyFiles": []
+    }
+  },
+  "hotPaths": [],
+  "userDirectives": []
+}

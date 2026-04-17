@@ -6,8 +6,8 @@
 
 # Test info
 
-- Name: rendering.spec.ts >> header shows VIVIM brand
-- Location: test\e2e\rendering.spec.ts:11:1
+- Name: rendering.spec.ts >> extension loads and service worker runs
+- Location: test\e2e\rendering.spec.ts:4:1
 
 # Error details
 

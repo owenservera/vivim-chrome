@@ -59,12 +59,22 @@ export class UILogic {
 
   // ==================== Formatting Logic ====================
 
-  formatMessage(text) {
+  sanitizeHtml(text) {
     if (!text) return '';
+    // Comprehensive HTML sanitization
     return text
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#x27;')
+      .replace(/\//g, '&#x2F;');
+  }
+
+  formatMessage(text) {
+    if (!text) return '';
+    const sanitized = this.sanitizeHtml(text);
+    return sanitized
       .replace(/\n/g, '<br>')
       .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
       .replace(/\*(.*?)\*/g, '<em>$1</em>')
@@ -72,11 +82,7 @@ export class UILogic {
   }
 
   escapeHtml(text) {
-    if (!text) return '';
-    return text
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;');
+    return this.sanitizeHtml(text);
   }
 
   formatTime(ts) {

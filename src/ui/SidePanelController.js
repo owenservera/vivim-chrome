@@ -15,6 +15,7 @@ export class SidePanelController {
     ];
     this.messageList = [];
     this.streamingMessage = null;
+    this.streamingModel = null; // Store model for streaming completion
     this.logger = console;
     this.lastSentTime = 0;
     this.rateLimitMs = 1000;
@@ -46,12 +47,13 @@ export class SidePanelController {
   }
 
   flushPendingUpdates() {
-    if (this.pendingStreamUpdates && this.pendingStreamUpdates.length > 0) {
+    if (this.pendingStreamUpdates && this.pendingStreamUpdates.length > 0 && this.messagesArea) {
       console.log('[SidePanel] Flushing pending stream updates:', this.pendingStreamUpdates.length);
-      for (const update of this.pendingStreamUpdates) {
+      const updates = [...this.pendingStreamUpdates]; // Copy to avoid modification during iteration
+      this.pendingStreamUpdates = [];
+      for (const update of updates) {
         this.updateStreamingMessage(update.content, update.model, update.seq, update.isFinal);
       }
-      this.pendingStreamUpdates = [];
     }
   }
 
@@ -91,6 +93,14 @@ export class SidePanelController {
       this.providerSelect.addEventListener('click', () => this.showProviderMenu());
     }
 
+    if (chrome.tabs && chrome.tabs.onActivated) {
+      chrome.tabs.onActivated.addListener(activeInfo => {
+        if (this.currentTabId !== activeInfo.tabId) {
+          this.switchTab(activeInfo.tabId);
+        }
+      });
+    }
+
     this.bindHeaderButtons();
     this.bindToolbar();
     this.flushPendingUpdates();
@@ -124,6 +134,11 @@ export class SidePanelController {
       reloadBtn.addEventListener('click', () => this.reloadConversation());
     }
 
+    const testBtn = document.getElementById('testBtn');
+    if (testBtn) {
+      testBtn.addEventListener('click', () => this.testCommunication());
+    }
+
     if (clearBtn) {
       clearBtn.addEventListener('click', () => this.clearConversation());
     }
@@ -136,20 +151,33 @@ export class SidePanelController {
     }
   }
 
-  async initializeWithCurrentTab() {
+async initializeWithCurrentTab() {
     try {
+      console.log('[SidePanel] Querying for current tab...');
       const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+      console.log('[SidePanel] Found tabs:', tabs.length, tabs.map(t => ({ id: t.id, url: t.url })));
+
       if (tabs[0] && tabs[0].id) {
         this.currentTabId = tabs[0].id;
-        await this.loadConversation();
+        console.log('[SidePanel] Set currentTabId to:', this.currentTabId, 'URL:', tabs[0].url);
+      } else {
+        console.error('[SidePanel] No active tab found or tab has no ID');
       }
     } catch (err) {
       console.error('[SidePanel] Failed to get current tab:', err);
     }
 
+    // Establish background connection first, then load conversation
     // checkBackgroundConnection() with retry — the first sendMessage may fail if
     // the service worker just woke up. Retry up to 3 times with 500ms backoff.
-    this._connectWithRetry(0);
+    await this._connectWithRetry(0);
+
+    // Now that we're connected, load the conversation
+    if (this.currentTabId) {
+      await this.loadConversation();
+    } else {
+      console.warn('[SidePanel] No currentTabId, skipping conversation load');
+    }
   }
 
   async _connectWithRetry(attempt) {
@@ -224,12 +252,14 @@ export class SidePanelController {
 
         case MessageTypes.STREAM_UPDATE:
           this.updateConnectionStatus('streaming');
+          this.streamingModel = message.model; // Store model for completion
           this.updateStreamingMessage(message.content, message.model, message.seq, message.isFinal);
           break;
 
         case MessageTypes.STREAM_COMPLETE:
           this.updateConnectionStatus('connected');
-          this.finalizeStreamingMessage();
+          this.finalizeStreamingMessage(this.streamingModel);
+          this.streamingModel = null; // Reset
           break;
 
         case MessageTypes.ERROR:
@@ -286,26 +316,71 @@ export class SidePanelController {
 
     console.log('[SidePanel] Sending prompt:', text, 'to tab:', this.currentTabId);
 
-    this.promptInput.value = '';
-    this.onInputChange();
+    // Emit UI action event to data feed
+    if (window.dataFeedManager?.isEnabled()) {
+      window.dataFeedManager.emit('ui:action', {
+        action: 'send_message',
+        content: text,
+        contentLength: text.length,
+        provider: this.currentProvider?.id,
+        tabId: this.currentTabId
+      });
+    }
 
     // Send USER_PROMPT to background for display
+    console.log('[SidePanel] Sending USER_PROMPT to background...');
     chrome.runtime.sendMessage({
       type: MessageTypes.USER_PROMPT,
       content: text,
-      conversationId: null, // Will be set by background based on tab
-      timestamp: Date.now()
+      conversationId: null,
+      timestamp: Date.now(),
+      tabId: this.currentTabId
     }).then(() => {
       console.log('[SidePanel] USER_PROMPT sent successfully');
+      // Clear input only after successful sending
+      this.promptInput.value = '';
+      this.onInputChange();
     }).catch((error) => {
-      this.logger.error('[SidePanel] Failed to send USER_PROMPT:', error);
+      console.error('[SidePanel] Failed to send USER_PROMPT:', error);
+      this.showToast('Failed to send: ' + error.message);
     });
 
+    // Only attempt injection if we have a valid tab ID
+    if (!this.currentTabId) {
+      console.error('[SidePanel] No currentTabId available for injection');
+      this.showToast('No active tab found for injection');
+      return;
+    }
+
     try {
-      // Inject into the appropriate provider interface
-      await this.injectPromptIntoProvider(text);
+      console.log('[SidePanel] Sending prompt to content script for injection');
+      console.log('[SidePanel] Current tab ID:', this.currentTabId);
+      console.log('[SidePanel] Current provider:', this.currentProvider.id);
+      console.log('[SidePanel] Prompt text length:', text.length);
+
+      // Send message to content script to inject the prompt into the webpage
+      const injectionPromise = chrome.tabs.sendMessage(this.currentTabId, {
+        type: 'INJECT_PROMPT',
+        provider: this.currentProvider.id,
+        prompt: text
+      });
+
+      // Add timeout to the promise
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Injection timeout')), 5000);
+      });
+
+      Promise.race([injectionPromise, timeoutPromise]).then((response) => {
+        console.log('[SidePanel] Prompt injection message sent successfully, response:', response);
+      }).catch((error) => {
+        console.error('[SidePanel] Failed to send injection message:', error);
+        console.error('[SidePanel] Error details:', error.message, error.stack);
+        this.showToast('Failed to inject prompt: ' + error.message);
+      });
     } catch (error) {
-      this.logger.error('[SidePanel] Send failed:', error);
+      console.error('[SidePanel] Injection setup failed:', error);
+      console.error('[SidePanel] Setup error details:', error.message, error.stack);
+      this.showToast('Injection setup failed: ' + error.message);
     }
   }
 
@@ -361,8 +436,8 @@ export class SidePanelController {
     });
 
     if (isFinal) {
-      this.chunkBuffer = [];
       this.finalizeStreamingMessage(model);
+      this.chunkBuffer = [];
     }
   }
 
@@ -396,6 +471,18 @@ export class SidePanelController {
   }
 
   clearMessages() {
+    const messageCount = this.messageList.length;
+
+    // Emit UI action event to data feed
+    if (window.dataFeedManager?.isEnabled()) {
+      window.dataFeedManager.emit('ui:action', {
+        action: 'clear_messages',
+        messageCount,
+        provider: this.currentProvider?.id,
+        tabId: this.currentTabId
+      });
+    }
+
     this.messageList = [];
     this.renderMessages();
   }
@@ -415,6 +502,12 @@ export class SidePanelController {
       activeStream.remove();
     }
 
+    // Detach emptyState to preserve it before clearing innerHTML
+    const emptyStateDetached = this.emptyState && this.emptyState.parentNode;
+    if (emptyStateDetached) {
+      this.emptyState.remove();
+    }
+
     this.messagesArea.innerHTML = '';
 
     if (this.messageList.length === 0 && !activeStream) {
@@ -430,7 +523,7 @@ export class SidePanelController {
         msgEl.innerHTML = `
           <div class="msg__content">${this.formatMessage(msg.content)}</div>
           <div class="msg__meta">
-            <span>${msg.model || (msg.role === 'user' ? 'You' : 'AI')}</span> • 
+            <span>${msg.model || (msg.role === 'user' ? 'You' : 'AI')}</span> •
             <span>${this.formatTime(msg.timestamp)}</span>
           </div>
         `;
@@ -469,13 +562,23 @@ export class SidePanelController {
     }
   }
 
-  formatMessage(text) {
+  sanitizeHtml(text) {
     if (!text) return '';
-    // Basic markdown-ish formatting
+    // Comprehensive HTML sanitization
     return text
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#x27;')
+      .replace(/\//g, '&#x2F;');
+  }
+
+  formatMessage(text) {
+    if (!text) return '';
+    // Basic markdown-ish formatting with sanitization
+    const sanitized = this.sanitizeHtml(text);
+    return sanitized
       .replace(/\n/g, '<br>')
       .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
       .replace(/\*(.*?)\*/g, '<em>$1</em>')
@@ -560,15 +663,27 @@ export class SidePanelController {
 
   async switchProvider(provider) {
     try {
-      await chrome.runtime.sendMessage({
-        type: 'PROVIDER_CHANGED',
-        providerId: provider.id,
-        tabId: this.currentTabId
-      });
-      await chrome.runtime.sendMessage({
-        type: 'CLEAR_CONVERSATION',
-        tabId: this.currentTabId
-      });
+      // Emit UI action event to data feed
+      if (window.dataFeedManager?.isEnabled()) {
+        window.dataFeedManager.emit('ui:action', {
+          action: 'switch_provider',
+          fromProvider: this.currentProvider?.id,
+          toProvider: provider.id,
+          tabId: this.currentTabId
+        });
+      }
+
+      await Promise.all([
+        chrome.runtime.sendMessage({
+          type: 'PROVIDER_CHANGED',
+          providerId: provider.id,
+          tabId: this.currentTabId
+        }),
+        chrome.runtime.sendMessage({
+          type: 'CLEAR_CONVERSATION',
+          tabId: this.currentTabId
+        })
+      ]);
       this.currentProvider = provider;
       this.updateProviderDisplay();
       this.clearMessages();
@@ -579,89 +694,6 @@ export class SidePanelController {
     }
 
     this.logger.info(`Switched to provider: ${provider.name}`);
-  }
-
-  async injectPromptIntoProvider(prompt) {
-    const injectionScripts = {
-      chatgpt: (prompt) => {
-        const textarea = document.querySelector('form textarea');
-        if (textarea) {
-          textarea.value = prompt;
-          textarea.dispatchEvent(new Event('input', { bubbles: true }));
-
-          setTimeout(() => {
-            const enterEvent = new KeyboardEvent('keydown', {
-              bubbles: true,
-              key: 'Enter',
-              code: 'Enter',
-              keyCode: 13
-            });
-            textarea.dispatchEvent(enterEvent);
-          }, 200);
-        }
-      },
-      claude: (prompt) => {
-        const textarea = document.querySelector('[data-testid="prompt-textarea"]') ||
-                        document.querySelector('textarea[placeholder*="Ask Claude"]') ||
-                        document.querySelector('form textarea');
-        if (textarea) {
-          textarea.value = prompt;
-          textarea.dispatchEvent(new Event('input', { bubbles: true }));
-
-          setTimeout(() => {
-            const submitBtn = document.querySelector('button[data-testid="send-button"]') ||
-                             document.querySelector('button[aria-label*="Send"]') ||
-                             document.querySelector('form button[type="submit"]');
-            if (submitBtn) {
-              submitBtn.click();
-            }
-          }, 200);
-        }
-      },
-      gemini: (prompt) => {
-        const textarea = document.querySelector('rich-textarea')?.shadowRoot?.querySelector('textarea') ||
-                        document.querySelector('textarea[aria-label*="Ask Gemini"]') ||
-                        document.querySelector('textarea[placeholder*="Ask Gemini"]');
-        if (textarea) {
-          textarea.value = prompt;
-          textarea.dispatchEvent(new Event('input', { bubbles: true }));
-
-          setTimeout(() => {
-            const sendBtn = document.querySelector('button[aria-label*="Send"]') ||
-                           document.querySelector('button[data-testid*="send"]') ||
-                           document.querySelector('form button[type="submit"]');
-            if (sendBtn) {
-              sendBtn.click();
-            }
-          }, 200);
-        }
-      }
-    };
-
-    const script = injectionScripts[this.currentProvider.id];
-    if (!script) {
-      this.logger.warn(`No injection script for provider: ${this.currentProvider.id}`);
-      this.showToast(`Provider ${this.currentProvider.name} not supported`);
-      return;
-    }
-
-    if (!this.currentTabId) {
-      this.logger.error('[SidePanel] No currentTabId for injection');
-      this.showToast('No active tab for injection');
-      return;
-    }
-
-    try {
-      await chrome.scripting.executeScript({
-        target: { tabId: this.currentTabId },
-        func: script,
-        args: [prompt]
-      });
-    } catch (error) {
-      this.logger.error('[SidePanel] Script injection failed:', error);
-      this.showToast('Failed to send prompt - please try manually');
-      throw error;
-    }
   }
 
   showToast(message) {
@@ -725,8 +757,8 @@ export class SidePanelController {
         <h3>Conversation History</h3>
         <div class="history-list">
           ${conversations.map(c => `
-            <div class="history-item" data-id="${c.id}">
-              <div class="history-title">${c.title || 'Untitled'}</div>
+            <div class="history-item" data-id="${this.sanitizeHtml(c.id)}">
+              <div class="history-title">${this.sanitizeHtml(c.title || 'Untitled')}</div>
               <div class="history-meta">${new Date(c.timestamp).toLocaleString()}</div>
             </div>
           `).join('')}
@@ -843,7 +875,202 @@ export class SidePanelController {
   }
 
   showPrivacySettings() {
-    this.showToast('Privacy settings coming soon');
+    this.showSettingsModal();
+  }
+
+  showSettingsModal() {
+    // Remove existing modal if present
+    const existingModal = document.querySelector('.settings-modal');
+    if (existingModal) {
+      existingModal.remove();
+    }
+
+    const modal = document.createElement('div');
+    modal.className = 'settings-modal';
+    modal.innerHTML = `
+      <div class="settings-overlay"></div>
+      <div class="settings-content">
+        <div class="settings-header">
+          <h3>Settings & Privacy</h3>
+          <button class="settings-close" aria-label="Close settings">&times;</button>
+        </div>
+        <div class="settings-body">
+          <div class="settings-section">
+            <h4>Data Feed</h4>
+            <p class="settings-description">
+              Automatically capture and store all extension activity for debugging and analysis.
+              Data is stored locally and never sent to external servers.
+            </p>
+            <div class="setting-item">
+              <label class="setting-toggle">
+                <input type="checkbox" id="dataFeedEnabled">
+                <span class="toggle-slider"></span>
+                Enable data feed
+              </label>
+            </div>
+            <div class="setting-item data-feed-options" style="display: none;">
+              <label>Storage Location:</label>
+              <select id="dataFeedBackend">
+                <option value="indexedDB">Local Storage (IndexedDB)</option>
+                <option value="fileSystem">Choose Folder (File System)</option>
+                <option value="chromeStorage">Extension Storage</option>
+              </select>
+              <button id="selectDataFolder" style="display: none;">Choose Folder</button>
+            </div>
+            <div class="setting-item data-feed-options" style="display: none;">
+              <button id="exportDataFeed">Export Data</button>
+              <button id="clearDataFeed">Clear Old Data (30+ days)</button>
+            </div>
+          </div>
+
+          <div class="settings-section">
+            <h4>Privacy</h4>
+            <p class="settings-description">
+              All conversations are stored locally on your device. No data is sent to external servers.
+            </p>
+            <div class="setting-item">
+              <button id="exportConversations">Export All Conversations</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    // Add event listeners
+    modal.querySelector('.settings-close').addEventListener('click', () => modal.remove());
+    modal.querySelector('.settings-overlay').addEventListener('click', () => modal.remove());
+
+    // Data feed settings
+    const dataFeedEnabled = modal.querySelector('#dataFeedEnabled');
+    const dataFeedBackend = modal.querySelector('#dataFeedBackend');
+    const selectDataFolder = modal.querySelector('#selectDataFolder');
+    const dataFeedOptions = modal.querySelectorAll('.data-feed-options');
+    const exportDataFeed = modal.querySelector('#exportDataFeed');
+    const clearDataFeed = modal.querySelector('#clearDataFeed');
+    const exportConversations = modal.querySelector('#exportConversations');
+
+    // Load current settings
+    this.loadSettingsForModal(dataFeedEnabled, dataFeedBackend);
+
+    // Toggle data feed options visibility
+    dataFeedEnabled.addEventListener('change', async () => {
+      const enabled = dataFeedEnabled.checked;
+      dataFeedOptions.forEach(el => el.style.display = enabled ? 'block' : 'none');
+
+      // Save setting
+      await chrome.storage.sync.set({ dataFeedEnabled: enabled });
+      if (window.dataFeedManager) {
+        await window.dataFeedManager.setEnabled(enabled);
+      }
+    });
+
+    // Backend selection
+    dataFeedBackend.addEventListener('change', async () => {
+      const backend = dataFeedBackend.value;
+      selectDataFolder.style.display = backend === 'fileSystem' ? 'inline-block' : 'none';
+
+      // Save setting
+      await chrome.storage.sync.set({ dataFeedBackend: backend });
+      if (window.dataFeedManager) {
+        await window.dataFeedManager.setBackend(backend);
+      }
+    });
+
+    // Select folder button
+    selectDataFolder.addEventListener('click', async () => {
+      try {
+        if (window.dataFeedManager) {
+          await window.dataFeedManager.setBackend('fileSystem', {});
+          this.showToast('Data folder selected successfully');
+        }
+      } catch (error) {
+        this.showToast('Failed to select data folder');
+        console.error('Failed to select data folder:', error);
+      }
+    });
+
+    // Export data feed
+    exportDataFeed.addEventListener('click', async () => {
+      try {
+        if (window.dataFeedManager) {
+          const data = await window.dataFeedManager.exportData('json');
+          const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `vivim-data-feed-${new Date().toISOString().split('T')[0]}.json`;
+          a.click();
+          URL.revokeObjectURL(url);
+          this.showToast('Data feed exported successfully');
+        }
+      } catch (error) {
+        this.showToast('Failed to export data feed');
+        console.error('Failed to export data feed:', error);
+      }
+    });
+
+    // Clear old data
+    clearDataFeed.addEventListener('click', async () => {
+      if (confirm('Clear data feed entries older than 30 days?')) {
+        try {
+          if (window.dataFeedManager) {
+            await window.dataFeedManager.cleanup(30);
+            this.showToast('Old data cleared successfully');
+          }
+        } catch (error) {
+          this.showToast('Failed to clear old data');
+          console.error('Failed to clear old data:', error);
+        }
+      }
+    });
+
+    // Export conversations
+    exportConversations.addEventListener('click', async () => {
+      try {
+        const response = await chrome.runtime.sendMessage({
+          type: 'EXPORT_ALL_CONVERSATIONS'
+        });
+        if (response && response.data) {
+          const blob = new Blob([JSON.stringify(response.data, null, 2)], { type: 'application/json' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `vivim-conversations-${new Date().toISOString().split('T')[0]}.json`;
+          a.click();
+          URL.revokeObjectURL(url);
+          this.showToast('Conversations exported successfully');
+        }
+      } catch (error) {
+        this.showToast('Failed to export conversations');
+        console.error('Failed to export conversations:', error);
+      }
+    });
+  }
+
+  async loadSettingsForModal(dataFeedEnabled, dataFeedBackend) {
+    try {
+      const settings = await chrome.storage.sync.get({
+        dataFeedEnabled: false,
+        dataFeedBackend: 'indexedDB'
+      });
+
+      dataFeedEnabled.checked = settings.dataFeedEnabled;
+      dataFeedBackend.value = settings.dataFeedBackend;
+
+      // Show/hide options based on enabled state
+      const dataFeedOptions = document.querySelectorAll('.data-feed-options');
+      dataFeedOptions.forEach(el => el.style.display = settings.dataFeedEnabled ? 'block' : 'none');
+
+      // Show folder select button if fileSystem backend
+      const selectDataFolder = document.querySelector('#selectDataFolder');
+      if (selectDataFolder) {
+        selectDataFolder.style.display = settings.dataFeedBackend === 'fileSystem' ? 'inline-block' : 'none';
+      }
+    } catch (error) {
+      console.error('Failed to load settings:', error);
+    }
   }
 
   async reloadConversation() {
@@ -864,6 +1091,29 @@ export class SidePanelController {
         console.error('[SidePanel] clearConversation failed:', err);
       }
       this.showToast('Conversation cleared');
+    }
+  }
+
+  async testCommunication() {
+    console.log('[SidePanel] Testing communication with content script...');
+    console.log('[SidePanel] Current tab ID:', this.currentTabId);
+
+    if (!this.currentTabId) {
+      this.showToast('No active tab found');
+      return;
+    }
+
+    try {
+      const response = await chrome.tabs.sendMessage(this.currentTabId, {
+        type: 'TEST_COMMUNICATION',
+        message: 'Hello from side panel',
+        timestamp: Date.now()
+      });
+      console.log('[SidePanel] Test communication response:', response);
+      this.showToast('Communication test: ' + (response?.success ? 'SUCCESS' : 'FAILED'));
+    } catch (error) {
+      console.error('[SidePanel] Test communication failed:', error);
+      this.showToast('Communication test failed: ' + error.message);
     }
   }
 
@@ -898,5 +1148,45 @@ export class SidePanelController {
       });
       this.messagesArea.appendChild(fragment);
     }
+
+    // Update message count in status bar based on search results
+    if (this.msgCountEl) {
+      const count = query ? filtered.length : this.messageList.length;
+      const total = this.messageList.length;
+      if (query && filtered.length !== total) {
+        this.msgCountEl.textContent = `${count} of ${total} messages`;
+      } else {
+        this.msgCountEl.textContent = `${total} message${total !== 1 ? 's' : ''}`;
+      }
+    }
+  }
+
+  destroy() {
+    // Clean up heartbeat timer to prevent memory leaks
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+
+    // Clean up any pending toast timeouts
+    if (this.toastTimeout) {
+      clearTimeout(this.toastTimeout);
+      this.toastTimeout = null;
+    }
+
+    // Clean up streaming message if active
+    this.cleanupStreamingMessage();
+
+    // Remove event listeners and cleanup references
+    if (this.promptInput) {
+      this.promptInput.removeEventListener('input', this.onInputChange);
+      this.promptInput.removeEventListener('keydown', this.onInputKeyDown);
+    }
+
+    if (this.sendBtn) {
+      this.sendBtn.removeEventListener('click', this.sendPrompt);
+    }
+
+    // Additional cleanup could be added here for other event listeners
   }
 }

@@ -69,6 +69,14 @@
         "https://claude.ai/*",
         "https://gemini.google.com/*"
       ]
+    },
+    {
+      "resources": [
+        "test-page.html"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
     }
   ]
 }

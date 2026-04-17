@@ -6,25 +6,34 @@ import { createWebBridge } from '../core/bridge/index.js';
 // NOTE: StealthFetchManager is an ISOLATED-world module (uses chrome.runtime).
 // It must NOT be imported here because providers/index.js runs in MAIN world.
 
-const bridge = createWebBridge({
-  selfId: 'vivim-bridge',
-  targetId: 'vivim-content',
-  autoHandshake: true
-});
+// Create a simple message bridge that sends directly to content script
+const messageBridge = {
+  send: function(action, data) {
+    const message = {
+      type: 'vivim-bridge',
+      communicationId: 'vivim-bridge',
+      action: action,
+      data: data,
+      timestamp: Date.now()
+    };
+    console.log('[Providers] Sending message to content script:', message);
+    window.postMessage(message, '*');
+  }
+};
 
 const providerRegistry = new ProviderRegistry();
 
 // Initialize providers
 const chatGPTProvider = new ChatGPTProvider();
-chatGPTProvider.setBridge(bridge);
+chatGPTProvider.setBridge(messageBridge);
 providerRegistry.register(chatGPTProvider);
 
 const claudeProvider = new ClaudeProvider();
-claudeProvider.setBridge(bridge);
+claudeProvider.setBridge(messageBridge);
 providerRegistry.register(claudeProvider);
 
 const geminiProvider = new GeminiProvider();
-geminiProvider.setBridge(bridge);
+geminiProvider.setBridge(messageBridge);
 providerRegistry.register(geminiProvider);
 
 function setupInterception() {

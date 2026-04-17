@@ -295,9 +295,7 @@ export class ConversationManager {
       const streamId = message.streamId;
 
       if (!existing || (streamId && existing.streamId !== streamId)) {
-        if (existing) {
-          await this.finalizeStreamingMessage(tabId);
-        }
+        const oldExisting = existing;
         existing = {
           content: message.content,
           model: message.model || "unknown",
@@ -308,6 +306,10 @@ export class ConversationManager {
           isFinal: message.isFinal || false
         };
         this.streamingMessages.set(key, existing);
+
+        if (oldExisting) {
+          this.finalizeStreamingMessage(tabId, oldExisting).catch(e => this.logger.error('Finalize error', e));
+        }
       } else {
         if (seq <= existing.lastSeq) {
           this.logger.debug(`Out-of-order chunk: seq=${seq}, lastSeq=${existing.lastSeq}, skipping`);
@@ -340,13 +342,15 @@ export class ConversationManager {
     await this.storage.addMessage(this.getConversationKey(tabId, msg.conversationId), msg, !msg.conversationId);
   }
 
-  async finalizeStreamingMessage(tabId) {
+  async finalizeStreamingMessage(tabId, specificStreaming = null) {
     const streamKey = 'stream_' + tabId;
-    const streaming = this.streamingMessages.get(streamKey);
+    const streaming = specificStreaming || this.streamingMessages.get(streamKey);
     if (!streaming) return;
 
     // Always remove the in-flight record first to prevent double-finalize
-    this.streamingMessages.delete(streamKey);
+    if (!specificStreaming) {
+      this.streamingMessages.delete(streamKey);
+    }
 
     // Persist the completed message regardless of the isFinal flag.
     // Previously, messages marked isFinal were deleted without being saved —
@@ -454,5 +458,31 @@ export class ConversationManager {
 
   async loadConversation(conversationId, tabId) {
     // Future implementation
+  }
+
+  /**
+   * Export all conversations
+   */
+  async exportAllConversations() {
+    try {
+      const conversationIds = await this.storage.getAllConversationIds();
+      const allConversations = {};
+
+      for (const id of conversationIds) {
+        const messages = await this.storage.getConversation(id);
+        if (messages.length > 0) {
+          allConversations[id] = messages;
+        }
+      }
+
+      return {
+        exportDate: new Date().toISOString(),
+        conversations: allConversations,
+        totalConversations: Object.keys(allConversations).length
+      };
+    } catch (error) {
+      this.logger.error('Error exporting all conversations:', error);
+      throw error;
+    }
   }
 }

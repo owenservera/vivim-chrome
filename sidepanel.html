@@ -396,6 +396,7 @@
     <div class="sidepanel__status">
       <span id="msgCount" aria-live="polite">0 messages</span>
       <div class="status-controls">
+        <button id="testBtn" type="button" aria-label="Test communication" title="Test Comm">🧪</button>
         <button id="reloadBtn" type="button" aria-label="Reload conversation from page" title="Reload from Page">🔄</button>
         <button id="clearBtn" type="button" aria-label="Clear conversation" title="Clear conversation">Clear</button>
       </div>
@@ -424,6 +425,29 @@
     .provider-option .provider-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
     .toast { position: fixed; bottom: 60px; left: 50%; transform: translateX(-50%); background: var(--vivim-primary); color: white; padding: 8px 16px; border-radius: 6px; font-size: 12px; z-index: 1000; animation: fadeIn 0.2s; }
     @keyframes fadeIn { from { opacity: 0; transform: translateX(-50%) translateY(10px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
+
+    /* Settings Modal */
+    .settings-modal { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; }
+    .settings-overlay { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.5); }
+    .settings-content { background: var(--bg-secondary); border: 1px solid var(--border-primary); border-radius: var(--radius-lg); max-width: 500px; max-height: 80vh; overflow-y: auto; position: relative; z-index: 1; width: 90%; }
+    .settings-header { padding: 16px 20px; border-bottom: 1px solid var(--border-primary); display: flex; align-items: center; justify-content: space-between; }
+    .settings-header h3 { margin: 0; font-size: 16px; font-weight: 600; }
+    .settings-close { background: none; border: none; color: var(--text-primary); font-size: 20px; cursor: pointer; padding: 0; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; }
+    .settings-body { padding: 20px; }
+    .settings-section { margin-bottom: 24px; }
+    .settings-section h4 { margin: 0 0 8px 0; font-size: 14px; font-weight: 600; color: var(--text-primary); }
+    .settings-description { margin: 0 0 12px 0; font-size: 12px; color: var(--text-secondary); line-height: 1.4; }
+    .setting-item { margin-bottom: 12px; display: flex; flex-direction: column; gap: 8px; }
+    .setting-item label { font-size: 13px; color: var(--text-primary); }
+    .setting-item select { background: var(--bg-tertiary); border: 1px solid var(--border-primary); border-radius: var(--radius-md); padding: 8px 12px; color: var(--text-primary); font-size: 13px; }
+    .setting-item button { background: var(--vivim-primary); border: none; border-radius: var(--radius-md); padding: 8px 16px; color: white; cursor: pointer; font-size: 13px; align-self: flex-start; }
+    .setting-item button:hover { background: var(--vivim-primary-hover); }
+    .setting-toggle { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+    .setting-toggle input[type="checkbox"] { display: none; }
+    .toggle-slider { width: 36px; height: 20px; background: var(--bg-tertiary); border-radius: 10px; position: relative; transition: background 0.2s; }
+    .toggle-slider::before { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; background: var(--text-tertiary); border-radius: 50%; transition: transform 0.2s, background 0.2s; }
+    .setting-toggle input[type="checkbox"]:checked + .toggle-slider { background: var(--vivim-primary); }
+    .setting-toggle input[type="checkbox"]:checked + .toggle-slider::before { transform: translateX(16px); background: white; }
   </style>
 
   <script type="module" src="./ui/index.js"></script>

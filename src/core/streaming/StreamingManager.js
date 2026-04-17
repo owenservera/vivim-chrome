@@ -8,6 +8,7 @@ import { Logger } from '../logging/Logger.js';
 export class StreamingManager {
   constructor(messageBridge, config = {}) {
     this.messageBridge = messageBridge;
+    this.dataFeedManager = config.dataFeedManager || (typeof window !== 'undefined' ? window.dataFeedManager : null);
     this.activeStreams = new Map();
     this.streamStateHistory = new Map();
     this.parsers = new Map();
@@ -375,6 +376,19 @@ export class StreamingManager {
         cumulative: true,
         isFinal: chunk.isFinal || false
       });
+
+      // Emit message received event to data feed
+      if (this.dataFeedManager?.isEnabled() && chunk.isFinal) {
+        this.dataFeedManager.emit('message:received', {
+          provider: stream.metadata?.provider || 'unknown',
+          role: chunk.role || 'assistant',
+          content: stream.accumulatedContent,
+          model: stream.metadata.model,
+          streamId,
+          chunkCount: stream.chunks.length,
+          messageLength: stream.accumulatedContent.length
+        });
+      }
     }
   }
 
