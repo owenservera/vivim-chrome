@@ -1009,7 +1009,8 @@ export class DeltaEncodingV1Parser extends BaseStreamParser {
                   role: currentRole.value || 'assistant',
                   model: currentModel.value,
                   seq: chunkSequence,
-                  timestamp: Date.now()
+                  timestamp: Date.now(),
+                  cumulative: true
                 });
                 lastEmittedContent = reconstructedText;
               }
@@ -1034,7 +1035,8 @@ export class DeltaEncodingV1Parser extends BaseStreamParser {
           model: currentModel.value,
           seq: chunkSequence,
           timestamp: Date.now(),
-          isFinal: true
+          isFinal: true,
+          cumulative: true
         });
       }
 

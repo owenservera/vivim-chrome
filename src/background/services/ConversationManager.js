@@ -114,6 +114,16 @@ export class ConversationManager {
 
       this.logger.info(`USER_PROMPT received from tab ${tabId}`);
 
+      // Deduplicate user prompts
+      const existingConvo = await this.getConversationForTab(tabId);
+      if (existingConvo && existingConvo.messages && existingConvo.messages.length > 0) {
+        const lastMsg = existingConvo.messages[existingConvo.messages.length - 1];
+        if (lastMsg.role === 'user' && lastMsg.content === message.content && (Date.now() - lastMsg.timestamp < 3000)) {
+          this.logger.info(`Duplicate user prompt detected, ignoring`);
+          return;
+        }
+      }
+
       // Store the message
       await this.storeMessage(tabId, {
         role: "user",
