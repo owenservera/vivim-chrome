@@ -1092,16 +1092,26 @@ export class DeltaEncodingV1Parser extends BaseStreamParser {
           currentModel.value = subValue.model_slug;
         }
 
-        if (subPath === "/message/content/parts" && (subOpType === "replace" || subOpType === "add")) {
-          messageParts.splice(0, messageParts.length, ...(Array.isArray(subValue) ? subValue : [subValue]));
-          hadContentChange = true;
+        if (subPath === "/message/content/parts" || subPath === "/message/content") {
+          if (subOpType === "replace" || subOpType === "add") {
+            const newParts = subValue?.parts || subValue;
+            messageParts.splice(0, messageParts.length, ...(Array.isArray(newParts) ? newParts : [newParts]));
+            hadContentChange = true;
+          }
         } else if (subPath && subPath.startsWith("/message/content/parts/")) {
           const match = subPath.match(/\/message\/content\/parts\/(\d+)/);
           if (match) {
             const idx = parseInt(match[1], 10);
-            const valToAppend = typeof subValue === 'string' ? subValue : (subValue?.parts?.[0] || "");
+            const valToAppend = typeof subValue === 'string' ? subValue : (subValue?.parts?.[0] || subValue?.text || "");
             if (subOpType === "append") {
-              messageParts[idx] = (messageParts[idx] || "") + valToAppend;
+              if (typeof messageParts[idx] === 'string') {
+                messageParts[idx] += valToAppend;
+              } else if (typeof messageParts[idx] === 'object' && messageParts[idx] !== null) {
+                if (messageParts[idx].text !== undefined) messageParts[idx].text += valToAppend;
+                else if (messageParts[idx].parts) messageParts[idx].parts[0] += valToAppend;
+              } else {
+                messageParts[idx] = valToAppend;
+              }
             } else if (subOpType === "replace" || subOpType === "add") {
               messageParts[idx] = subValue;
             }
@@ -1116,16 +1126,27 @@ export class DeltaEncodingV1Parser extends BaseStreamParser {
       if (path === "/message/metadata" && op === "add" && value?.model_slug) {
         currentModel.value = value.model_slug;
       }
-      if (path === "/message/content/parts" && (op === "replace" || op === "add")) {
-        messageParts.splice(0, messageParts.length, ...(Array.isArray(value) ? value : [value]));
+      
+      // Check for content/parts replacement or addition
+      if ((path === "/message/content/parts" || path === "/message/content") && (op === "replace" || op === "add")) {
+        const newParts = value?.parts || value;
+        messageParts.splice(0, messageParts.length, ...(Array.isArray(newParts) ? newParts : [newParts]));
         hadContentChange = true;
       } else if (path && path.startsWith("/message/content/parts/")) {
         const match = path.match(/\/message\/content\/parts\/(\d+)/);
         if (match) {
           const idx = parseInt(match[1], 10);
-          const valToAppend = typeof value === 'string' ? value : (value?.parts?.[0] || "");
+          const valToAppend = typeof value === 'string' ? value : (value?.parts?.[0] || value?.text || "");
           if (op === "append") {
-            messageParts[idx] = (messageParts[idx] || "") + valToAppend;
+            // Handle appending string to string
+            if (typeof messageParts[idx] === 'string') {
+              messageParts[idx] += valToAppend;
+            } else if (typeof messageParts[idx] === 'object' && messageParts[idx] !== null) {
+              if (messageParts[idx].text !== undefined) messageParts[idx].text += valToAppend;
+              else if (messageParts[idx].parts) messageParts[idx].parts[0] += valToAppend;
+            } else {
+              messageParts[idx] = valToAppend;
+            }
           } else if (op === "replace" || op === "add") {
             messageParts[idx] = value;
           }
@@ -1138,7 +1159,14 @@ export class DeltaEncodingV1Parser extends BaseStreamParser {
   }
 
   reconstructContent(messageParts) {
-    return messageParts.filter(p => typeof p === 'string').join('');
+    return messageParts.map(p => {
+      if (typeof p === 'string') return p;
+      if (p && typeof p === 'object') {
+        if (typeof p.text === 'string') return p.text;
+        if (Array.isArray(p.parts)) return p.parts.join('');
+      }
+      return '';
+    }).join('');
   }
 }
 

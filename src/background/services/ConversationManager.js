@@ -13,6 +13,7 @@ export class ConversationManager {
     this.streamingMessages = new Map();
     this.tabProviders = new Map(); // Track provider per tab
     this.logger = new Logger('ConversationManager');
+    this.processingQueue = new Map(); // tabId -> Promise
     this.destinationManager = null;
 
     this.bindEvents();
@@ -146,30 +147,24 @@ export class ConversationManager {
     }
   }
 
+  async enqueueProcessing(tabId, taskFn) {
+    const currentPromise = this.processingQueue.get(tabId) || Promise.resolve();
+    const nextPromise = currentPromise.then(() => taskFn()).catch(e => this.logger.error('Queue task error', e));
+    this.processingQueue.set(tabId, nextPromise);
+    return nextPromise;
+  }
+
   /**
    * Handle streaming chunks
    */
   async handleStreamChunk(message, sender) {
     try {
       const tabId = message.tabId || sender?.tab?.id;
-      // handleStreamChunkInternal already calls broadcastToUI with the
-      // correctly processed/deduplicated state. Do NOT call broadcastToUI
-      // again here with the raw, unprocessed message — that would cause
-      // duplicate STREAM_UPDATE events in the side panel.
-      await this.handleStreamChunkInternal(tabId, message);
-
-    } catch (error) {
-      this.logger.error('Error handling stream chunk:', error);
-      const tabId = message.tabId || sender?.tab?.id;
-      if (tabId) {
-        this.streamingMessages.delete('stream_' + tabId);
-        this.logger.info(`Cleaned up streaming state for tab ${tabId} after error`);
-      }
-      this.broadcastToUI({
-        type: MessageTypes.ERROR,
-        error: 'Stream processing error',
-        tabId
+      await this.enqueueProcessing(tabId, async () => {
+        await this.handleStreamChunkInternal(tabId, message);
       });
+    } catch (error) {
+      this.logger.error("Failed to handle stream chunk:", error);
     }
   }
 
@@ -179,26 +174,24 @@ export class ConversationManager {
   async handleStreamComplete(message, sender) {
     try {
       const tabId = message.tabId || sender?.tab?.id;
-      const streamId = message.streamId;
+      await this.enqueueProcessing(tabId, async () => {
+        const streamId = message.streamId;
+        const streamKey = "stream_" + tabId;
+        const streaming = this.streamingMessages.get(streamKey);
 
-      this.logger.info(`STREAM_COMPLETE for tab ${tabId}`, { streamId });
+        if (streaming && (!streamId || streaming.streamId === streamId)) {
+          await this.finalizeStreamingMessage(tabId);
+          this.streamingMessages.delete(streamKey);
+        }
 
-      const streamKey = "stream_" + tabId;
-      const streaming = this.streamingMessages.get(streamKey);
-
-      if (streaming && (!streamId || streaming.streamId === streamId)) {
-        await this.finalizeStreamingMessage(tabId);
-        this.streamingMessages.delete(streamKey);
-      }
-
-      // Notify UI
-      this.broadcastToUI({
-        type: MessageTypes.STREAM_COMPLETE,
-        tabId
+        // Notify UI
+        this.broadcastToUI({
+          type: MessageTypes.STREAM_COMPLETE,
+          tabId
+        });
       });
-
     } catch (error) {
-      this.logger.error('Error handling stream complete:', error);
+      this.logger.error("Failed to handle stream complete:", error);
     }
   }
 
