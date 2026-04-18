@@ -77,17 +77,15 @@ function setupInterception() {
     });
 
     if (responseProvider) {
-      setTimeout(async () => {
-        try {
-          await responseProvider.onResponse({
-            url: reqUrl,
-            response: clonedResponse,
-            clone: () => clonedResponse.clone()
-          });
-        } catch (error) {
-          console.warn(`[Providers] Error in ${responseProvider.id} provider onResponse:`, error);
-        }
-      }, 0);
+      try {
+        await responseProvider.onResponse({
+          url: reqUrl,
+          response: clonedResponse,
+          clone: () => clonedResponse.clone()
+        });
+      } catch (error) {
+        console.warn(`[Providers] Error in ${responseProvider.id} provider onResponse:`, error);
+      }
     }
 
     return response;

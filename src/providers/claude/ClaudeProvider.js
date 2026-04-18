@@ -1,26 +1,22 @@
 import { BaseProvider } from '../../core/providers/BaseProvider.js';
-import { createProviderMixin } from '../../core/providers/ProviderMixin.js';
-import { createAuthStore } from '../../core/providers/AuthStore.js';
-import { StreamingManager } from '../../core/streaming/StreamingManager.js';
 import { Logger } from '../../core/logging/Logger.js';
+import { ClaudeAuthStore } from './ClaudeAuthStore.js';
+import { ClaudeStealthInterceptor } from './ClaudeStealthInterceptor.js';
+import { ClaudeResponseParser } from './ClaudeResponseParser.js';
 
-const ClaudeAuthStore = createAuthStore('sessionKey');
-
-const MixinProvider = createProviderMixin(BaseProvider);
-
-export class ClaudeProvider extends MixinProvider {
+export class ClaudeProvider extends BaseProvider {
   constructor() {
     super({
       id: 'claude',
       name: 'Claude',
-      hosts: ['claude.ai', 'api.anthropic.com'],
+      hosts: ['claude.ai'],
       capabilities: {
         supportsStreaming: true,
         supportsAuth: true,
         messageFormat: 'anthropic'
       },
       interceptPatterns: {
-        request: /\/api\/append_message/
+        request: /\/v1\/messages(\?|$)/
       },
       stealth: {
         enabled: true,
@@ -32,56 +28,58 @@ export class ClaudeProvider extends MixinProvider {
       baseRetryDelay: 1000
     });
 
-    this.authStore = new ClaudeAuthStore();
-    this.streamingManager = null;
     this.logger = new Logger('ClaudeProvider');
+    this.authStore = new ClaudeAuthStore();
+    this.interceptor = new ClaudeStealthInterceptor(this.authStore, this.config);
+    this.responseParser = null;
   }
 
   onAuthDataLoaded(secureAuth) {
-    this.authStore.setPrimary(secureAuth.sessionKey);
+    this.authStore.setPrimary(secureAuth.authorization);
+    if (secureAuth.apiKey) {
+      this.authStore.setApiKey(secureAuth.apiKey);
+    }
   }
 
   matchRequest(ctx) {
     const pattern = this.interceptPatterns?.request;
-    if (!pattern) return ctx.url?.includes('claude.ai') && ctx.method === 'POST';
+    if (!pattern) return ctx.url?.includes('/v1/messages');
     return this.matchesPattern(ctx.url, pattern);
   }
 
   onRequest(ctx) {
     this.logger.debug('onRequest called:', ctx.url);
 
-    if (ctx.headers['Cookie'] || ctx.headers['cookie']) {
-      const cookies = ctx.headers['Cookie'] || ctx.headers['cookie'];
-      const sessionMatch = cookies.match(/sessionKey=([^;]+)/);
-      if (sessionMatch) {
-        this.authStore.setPrimary(sessionMatch[1]);
-        this.storeSecureAuthData(this.authStore.getLatest());
-      }
+    if (window.dataFeedManager?.isEnabled()) {
+      window.dataFeedManager.emit('provider:request', {
+        provider: 'claude',
+        url: ctx.url,
+        method: ctx.method,
+        headers: ctx.headers,
+        bodySize: ctx.body ? (typeof ctx.body === 'string' ? ctx.body.length : ctx.body.byteLength) : 0
+      });
     }
 
-    if (ctx.body) {
-      try {
-        const bodyStr = typeof ctx.body === 'string' ? ctx.body : new TextDecoder().decode(ctx.body);
-        const payload = JSON.parse(bodyStr);
+    this.interceptor.processRequest(ctx);
+    this.interceptor.handleUserPrompt(ctx, (userPrompt) => {
+      this.logger.info(`Extracted user prompt (${userPrompt.content.length} chars)`);
 
-        if (payload.sessionKey) {
-          this.authStore.setPrimary(payload.sessionKey);
-        }
-
-        if (payload.prompt || payload.message) {
-          const content = payload.prompt || payload.message;
-          this.logger.info(`Extracted Claude user prompt (${content.length} chars)`);
-
-          this.sendToBridge('userPrompt', {
-            role: 'user',
-            content: content,
-            conversationId: payload.conversationId || null
-          });
-        }
-      } catch (e) {
-        this.logger.warn('Failed to parse Claude request body:', e.message);
+      if (window.dataFeedManager?.isEnabled()) {
+        window.dataFeedManager.emit('message:sent', {
+          provider: 'claude',
+          role: 'user',
+          content: userPrompt.content,
+          conversationId: userPrompt.sessionId,
+          messageLength: userPrompt.content.length
+        });
       }
-    }
+
+      this.sendToBridge('userPrompt', {
+        role: 'user',
+        content: userPrompt.content,
+        conversationId: userPrompt.sessionId
+      });
+    });
   }
 
   matchResponse(ctx) {
@@ -91,45 +89,62 @@ export class ClaudeProvider extends MixinProvider {
   }
 
   async onResponse(ctx) {
-    this.logger.info('Intercepted Claude streaming response');
+    this.logger.info(`Intercepted Claude response: ${ctx.url}`);
 
-    if (!this.streamingManager) {
-      this.streamingManager = new StreamingManager({
-        send: (action, data) => this.sendToBridge(action, data)
-      }, {
+    if (window.dataFeedManager?.isEnabled()) {
+      window.dataFeedManager.emit('provider:response', {
+        provider: 'claude',
+        url: ctx.url,
+        responseStatus: ctx.response.status,
+        responseHeaders: Object.fromEntries(ctx.response.headers.entries()),
+        contentType: ctx.response.headers.get('content-type')
+      });
+    }
+
+    if (!this.responseParser) {
+      this.responseParser = new ClaudeResponseParser({
+        send: (action, data) => {
+          this.logger.debug(`Sending bridge action: ${action}`, data);
+          this.sendToBridge(action, data);
+        },
         dataFeedManager: window.dataFeedManager
       });
     }
 
     const streamId = 'claude_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
+    const format = 'claude-sse';
+
+    this.logger.info(`Starting stream processing. ID: ${streamId}, Format: ${format}`);
 
     try {
-      await this.streamingManager.processStream({
+      await this.responseParser.process({
         streamId,
         response: ctx.response,
-        format: 'claude-sse',
+        format,
         metadata: {
           provider: 'claude',
-          model: 'claude-3'
+          model: 'unknown'
         }
       });
+      this.logger.info(`Stream processing completed: ${streamId}`);
     } catch (e) {
-      this.logger.error('Claude streaming error:', e);
+      this.logger.error(`Streaming error for ${streamId}:`, e);
 
       try {
+        this.logger.info(`Attempting error recovery for ${streamId}`);
         await this.handleProviderError(e, async () => {
-          return await this.streamingManager.processStream({
+          return await this.responseParser.process({
             streamId: streamId + '_retry',
             response: ctx.response,
-            format: 'claude-sse',
+            format,
             metadata: {
               provider: 'claude',
-              model: 'claude-3'
+              model: 'unknown'
             }
           });
-        }, () => this.refreshSessionKey());
+        }, () => this.refreshAuthTokens());
       } catch (recoveryError) {
-        this.logger.error('Claude error recovery failed:', recoveryError);
+        this.logger.error(`Error recovery failed for ${streamId}:`, recoveryError);
         this.sendToBridge('streamComplete', { streamId, error: recoveryError.message });
       }
     }
@@ -137,55 +152,48 @@ export class ClaudeProvider extends MixinProvider {
 
   getAuthHeaders() {
     const auth = this.authStore.getLatest();
-    const headers = {};
-
-    if (auth.sessionKey) {
-      headers['Cookie'] = `sessionKey=${auth.sessionKey}`;
-      headers['X-Session-Key'] = auth.sessionKey;
-    }
-
-    return headers;
+    return {
+      'x-api-key': auth.apiKey || auth.authorization,
+      'anthropic-version': '2023-06-01',
+      ...auth.extraHeaders
+    };
   }
 
-  async extractSessionKey() {
+  async refreshAuthTokens() {
     try {
+      this.logger.info('Attempting to refresh Claude auth tokens');
+
       const tabs = await chrome.tabs.query({ url: "https://claude.ai/*" });
-      if (tabs.length === 0) return null;
+      if (tabs.length === 0) {
+        throw new Error('No Claude tab found for token refresh');
+      }
 
       const results = await chrome.scripting.executeScript({
         target: { tabId: tabs[0].id },
         func: () => {
-          const cookies = document.cookie;
-          const sessionMatch = cookies.match(/sessionKey=([^;]+)/);
-          if (sessionMatch) return sessionMatch[1];
+          const sessionToken = localStorage.getItem('sessionToken') ||
+                           sessionStorage.getItem('sessionToken');
+          const apiKey = localStorage.getItem('apiKey');
 
-          const sessionKey = localStorage.getItem('sessionKey');
-          if (sessionKey) return sessionKey;
-
-          return null;
+          return { sessionToken, apiKey };
         }
       });
 
-      return results?.[0]?.result;
-    } catch (error) {
-      this.logger.warn('Failed to extract Claude session key:', error);
-      return null;
-    }
-  }
-
-  async refreshSessionKey() {
-    try {
-      this.logger.info('Attempting to refresh Claude session key');
-      const sessionKey = await this.extractSessionKey();
-      if (sessionKey) {
-        this.authStore.setPrimary(sessionKey);
-        this.logger.info('Claude session key refreshed successfully');
-        return true;
+      const { sessionToken, apiKey } = results?.[0]?.result || {};
+      if (sessionToken) {
+        this.authStore.setPrimary(sessionToken);
       }
-      return false;
+      if (apiKey) {
+        this.authStore.setApiKey(apiKey);
+      }
+
+      this.logger.info('Auth tokens refreshed successfully');
+      return true;
     } catch (error) {
-      this.logger.error('Failed to refresh Claude session key:', error);
+      this.logger.error('Failed to refresh auth tokens:', error);
       return false;
     }
   }
 }
+
+export default ClaudeProvider;

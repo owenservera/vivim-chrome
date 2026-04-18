@@ -1,14 +1,15 @@
+/**
+ * ChatGPT Provider Module
+ * Complete interception and streaming implementation
+ */
+
 import { BaseProvider } from '../../core/providers/BaseProvider.js';
-import { createProviderMixin } from '../../core/providers/ProviderMixin.js';
-import { createAuthStore } from '../../core/providers/AuthStore.js';
-import { StreamingManager } from '../../core/streaming/StreamingManager.js';
 import { Logger } from '../../core/logging/Logger.js';
+import { ChatGPTAuthStore } from './ChatGPTAuthStore.js';
+import { ChatGPTStealthInterceptor } from './ChatGPTStealthInterceptor.js';
+import { StreamingManager } from '../../core/streaming/StreamingManager.js';
 
-const ChatGPTAuthStore = createAuthStore('authorization', 'extraHeaders');
-
-const MixinProvider = createProviderMixin(BaseProvider);
-
-export class ChatGPTProvider extends MixinProvider {
+export class ChatGPTProvider extends BaseProvider {
   constructor() {
     super({
       id: 'chatgpt',
@@ -32,9 +33,10 @@ export class ChatGPTProvider extends MixinProvider {
       baseRetryDelay: 1000
     });
 
-    this.authStore = new ChatGPTAuthStore();
-    this.streamingManager = null;
     this.logger = new Logger('ChatGPTProvider');
+    this.authStore = new ChatGPTAuthStore();
+    this.interceptor = new ChatGPTStealthInterceptor(this.authStore, this.config);
+    this.streamingManager = null;
   }
 
   onAuthDataLoaded(secureAuth) {
@@ -63,72 +65,26 @@ export class ChatGPTProvider extends MixinProvider {
       });
     }
 
-    const auth = ctx.headers['Authorization'] || ctx.headers['authorization'];
-    if (auth) {
-      this.authStore.setPrimary(auth);
-      this.storeSecureAuthData(this.authStore.getLatest());
-    }
+    this.interceptor.processRequest(ctx);
+    this.interceptor.handleUserPrompt(ctx, (userPrompt) => {
+      this.logger.info(`Extracted user prompt (${userPrompt.content.length} chars)`);
 
-    const extras = {};
-    for (const [k, v] of Object.entries(ctx.headers)) {
-      const lower = k.toLowerCase();
-      if (lower.startsWith('chatgpt-')) {
-        extras[k] = v;
+      if (window.dataFeedManager?.isEnabled()) {
+        window.dataFeedManager.emit('message:sent', {
+          provider: 'chatgpt',
+          role: 'user',
+          content: userPrompt.content,
+          conversationId: userPrompt.conversationId,
+          messageLength: userPrompt.content.length
+        });
       }
-    }
-    if (Object.keys(extras).length > 0) {
-      this.authStore.setMultiple(extras);
-      this.storeSecureAuthData(this.authStore.getLatest());
-    }
 
-    this.handleUserPrompt(ctx);
-  }
-
-  handleUserPrompt(ctx) {
-    const pattern = this.interceptPatterns?.request;
-    const isConversationEndpoint = this.matchesPattern(ctx.url, pattern);
-    
-    if (!isConversationEndpoint || !ctx.body) {
-      return;
-    }
-    
-    try {
-      const bodyStr = typeof ctx.body === 'string' ? ctx.body : new TextDecoder().decode(ctx.body);
-      const payload = JSON.parse(bodyStr);
-
-      if (payload.messages && Array.isArray(payload.messages)) {
-        const userMessages = payload.messages.filter(m => m.author?.role === 'user');
-        const userMessage = userMessages[userMessages.length - 1];
-
-        if (userMessage && userMessage.content?.parts) {
-          const content = userMessage.content.parts
-            .filter(p => typeof p === 'string')
-            .join('\n');
-
-          this.logger.info(`Extracted user prompt (${content.length} chars)`);
-
-          if (content) {
-            if (window.dataFeedManager?.isEnabled()) {
-              window.dataFeedManager.emit('message:sent', {
-                provider: 'chatgpt',
-                role: 'user',
-                content: content,
-                conversationId: payload.conversation_id || null,
-                messageLength: content.length
-              });
-            }
-
-            this.sendToBridge('userPrompt', {
-              role: 'user',
-              content: content,
-              conversationId: payload.conversation_id || null
-            });
-          }
-        }
-      }
-    } catch (e) {
-      this.logger.warn('Failed to parse request body:', e.message);
-    }
+      this.sendToBridge('userPrompt', {
+        role: 'user',
+        content: userPrompt.content,
+        conversationId: userPrompt.conversationId
+      });
+    });
   }
 
   matchResponse(ctx) {
@@ -157,33 +113,19 @@ export class ChatGPTProvider extends MixinProvider {
           this.logger.debug(`Sending bridge action: ${action}`, data);
           this.sendToBridge(action, data);
         }
-      }, {
-        dataFeedManager: window.dataFeedManager
-      });
+      }, { dataFeedManager: window.dataFeedManager });
     }
 
     const streamId = 'chatgpt_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
     const format = 'delta-encoding-v1';
-    
-    this.logger.info(`Starting stream processing. ID: ${streamId}, Format: ${format}`);
 
-    // Create a proxy to log raw chunks if needed
-    const originalResponse = ctx.response;
-    const loggingStream = new TransformStream({
-      transform(chunk, controller) {
-        console.log(`[DEBUG_STREAM] Raw chunk (${chunk.length} bytes):`, new TextDecoder().decode(chunk).substring(0, 100));
-        controller.enqueue(chunk);
-      }
-    });
-    
-    // We can't easily replace the response body in the intercepted fetch without more work, 
-    // but we can at least log what we pass to the manager.
+    this.logger.info(`Starting stream processing. ID: ${streamId}, Format: ${format}`);
 
     try {
       await this.streamingManager.processStream({
         streamId,
         response: ctx.response,
-        format: format,
+        format,
         metadata: {
           provider: 'chatgpt',
           model: 'unknown'
@@ -199,7 +141,7 @@ export class ChatGPTProvider extends MixinProvider {
           return await this.streamingManager.processStream({
             streamId: streamId + '_retry',
             response: ctx.response,
-            format: format,
+            format,
             metadata: {
               provider: 'chatgpt',
               model: 'unknown'
@@ -264,3 +206,5 @@ export class ChatGPTProvider extends MixinProvider {
     }
   }
 }
+
+export default ChatGPTProvider;

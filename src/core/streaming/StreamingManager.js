@@ -960,10 +960,9 @@ export class DeltaEncodingV1Parser extends BaseStreamParser {
         }
 
         if (value) {
-          this.logger.debug(`[DEBUG_STREAM] Received raw chunk: ${value.length} bytes`);
+          buffer += decoder.decode(value, { stream: true });
         }
 
-        buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
         buffer = lines.pop() || '';
 
