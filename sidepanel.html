@@ -46,6 +46,24 @@
       flex-direction: column;
       height: 100%;
       width: 100%;
+      min-width: 280px;
+      max-width: 600px;
+      position: relative;
+    }
+
+    .resize-handle {
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 6px;
+      cursor: ew-resize;
+      background: transparent;
+      z-index: 100;
+    }
+    .resize-handle:hover, .resize-handle--active {
+      background: var(--vivim-primary);
+      opacity: 0.5;
     }
 
     /* ─── Header ─── */
@@ -337,29 +355,37 @@
   </style>
 </head>
 <body>
-  <div class="sidepanel">
+  <div class="sidepanel" id="sidepanel">
+    <!-- Resize Handle -->
+    <div class="resize-handle" id="resizeHandle" title="Drag to resize"></div>
     <!-- Header -->
     <div class="sidepanel__header">
-      <div class="sidepanel__header__brand">
+<div class="sidepanel__header__brand">
         <svg width="20" height="20" viewBox="0 0 20 20" fill="none" role="img" aria-label="VIVIM logo">
           <rect width="20" height="20" rx="4" fill="#6C5CE7"/>
           <text x="10" y="15" text-anchor="middle" fill="white" font-size="12" font-weight="bold">V</text>
         </svg>
         <span>VIVIM</span>
       </div>
-       <div class="sidepanel__header__controls">
-         <button class="header-btn" id="newChatBtn" type="button" aria-label="Start new conversation" title="New Chat">➕</button>
-         <button class="header-btn" id="historyBtn" type="button" aria-label="Conversation history" title="History">📚</button>
-         <button class="header-btn" id="providerSelect" type="button" aria-label="Select AI provider" title="Select provider">
-           <span class="provider-dot" id="providerDot" aria-hidden="true"></span>
-           <span id="providerName">ChatGPT</span>
-         </button>
-         <button class="header-btn" id="exportBtn" type="button" aria-label="Export conversation" title="Export">📥</button>
-         <button class="header-btn" id="privacyBtn" type="button" aria-label="Privacy and telemetry settings" title="Privacy & Telemetry">⚙️</button>
-       </div>
-      <div class="sidepanel__header__status">
-        <span class="status-dot" id="statusDot" aria-hidden="true"></span>
-        <span id="statusText" aria-live="polite">Connecting...</span>
+      <div class="sidepanel__header__controls">
+        <button class="header-btn" id="newChatBtn" type="button" aria-label="Start new conversation" title="New Chat">➕</button>
+        <button class="header-btn" id="historyBtn" type="button" aria-label="Conversation history" title="History">📚</button>
+        <button class="header-btn" id="providerSelect" type="button" aria-label="Select AI provider" title="Select provider">
+          <span class="provider-dot" id="providerDot" aria-hidden="true"></span>
+          <span id="providerName">ChatGPT</span>
+        </button>
+        <button class="header-btn" id="exportBtn" type="button" aria-label="Export conversation" title="Export">📥</button>
+        <button class="header-btn" id="privacyBtn" type="button" aria-label="Privacy and telemetry settings" title="Privacy & Telemetry">⚙️</button>
+      </div>
+      <div class="sidepanel__header__right">
+        <div class="sidepanel__header__status">
+          <span class="status-dot" id="statusDot" aria-hidden="true"></span>
+          <span id="statusText" aria-live="polite">Connecting...</span>
+        </div>
+        <div class="header-tabs">
+          <button type="button" class="header-tab active" data-tab="chat">Chat</button>
+          <button type="button" class="header-tab" data-tab="debug">Debug</button>
+        </div>
       </div>
     </div>
 
@@ -370,12 +396,43 @@
       <div id="search-desc" class="sr-only">Search through conversation messages</div>
     </div>
 
-    <!-- Messages Area -->
-    <div class="sidepanel__messages" id="messagesArea">
-      <div class="empty-state" id="emptyState">
-        <div class="empty-state__icon">💬</div>
-        <div class="empty-state__title">No messages yet</div>
-        <div class="empty-state__desc">Type a prompt below or start chatting</div>
+    <!-- Chat Tab -->
+    <div class="tab-content tab-content--active" id="chatContent">
+      <div class="sidepanel__messages" id="messagesArea">
+        <div class="empty-state" id="emptyState">
+          <div class="empty-state__icon">💬</div>
+          <div class="empty-state__title">No messages yet</div>
+          <div class="empty-state__desc">Type a prompt below or start chatting</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Debug Tab -->
+    <div class="tab-content" id="debugContent">
+      <div class="debug-panel">
+        <div class="debug-header">
+          <span>Stream/Parser Debug</span>
+          <div class="debug-controls">
+            <button id="debugCaptureBtn" type="button" class="debug-btn debug-btn--primary">Capture</button>
+            <button id="debugConsoleBtn" type="button" class="debug-btn">Console</button>
+            <button id="debugCopyAllBtn" type="button" class="debug-btn">Copy</button>
+            <button id="debugExportBtn" type="button" class="debug-btn">Export</button>
+            <button id="debugClearBtn" type="button" class="debug-btn">Clear</button>
+          </div>
+        </div>
+        <div class="debug-filters">
+          <button type="button" class="filter-btn active" data-filter="all">All</button>
+          <button type="button" class="filter-btn" data-filter="console">Console</button>
+          <button type="button" class="filter-btn" data-filter="stream">Stream</button>
+          <button type="button" class="filter-btn" data-filter="error">Error</button>
+        </div>
+        <div class="debug-data" id="debugData">
+          <div class="empty-state">
+            <div class="empty-state__icon">🔍</div>
+            <div class="empty-state__title">No raw data captured</div>
+            <div class="empty-state__desc">Click "Start Capture" to capture raw message data</div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -396,6 +453,7 @@
     <div class="sidepanel__status">
       <span id="msgCount" aria-live="polite">0 messages</span>
       <div class="status-controls">
+        <button id="debugToggleBtn" type="button" class="debug-toggle-btn" aria-label="Toggle Debug Panel" title="Debug">🐛 Debug</button>
         <button id="testBtn" type="button" aria-label="Test communication" title="Test Comm">🧪</button>
         <button id="reloadBtn" type="button" aria-label="Reload conversation from page" title="Reload from Page">🔄</button>
         <button id="clearBtn" type="button" aria-label="Clear conversation" title="Clear conversation">Clear</button>
@@ -405,9 +463,14 @@
 
   <style>
     .sidepanel__header__controls { display: flex; gap: 8px; align-items: center; }
+    .sidepanel__header__right { display: flex; align-items: center; gap: 12px; }
     .header-btn { background: var(--bg-secondary); border: 1px solid var(--border-primary); border-radius: 6px; padding: 4px 8px; color: var(--text-primary); cursor: pointer; display: flex; align-items: center; gap: 6px; font-size: 12px; }
     .header-btn:hover { background: var(--bg-hover); }
     .provider-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--vivim-primary); }
+    .header-tabs { display: flex; gap: 2px; }
+    .header-tab { background: var(--bg-tertiary); border: 1px solid var(--border-primary); border-radius: 4px; padding: 4px 10px; color: var(--text-secondary); cursor: pointer; font-size: 11px; }
+    .header-tab:hover { background: var(--bg-hover); color: var(--text-primary); }
+    .header-tab.active { background: var(--vivim-primary); border-color: var(--vivim-primary); color: white; }
     .sidepanel__toolbar { padding: 8px 12px; border-bottom: 1px solid var(--border-primary); display: flex; }
     .toolbar-search { flex: 1; background: var(--bg-secondary); border: 1px solid var(--border-primary); border-radius: 6px; padding: 6px 10px; color: var(--text-primary); font-size: 12px; }
     .toolbar-search:focus { border-color: var(--vivim-primary); outline: none; }
@@ -425,6 +488,32 @@
     .provider-option .provider-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
     .toast { position: fixed; bottom: 60px; left: 50%; transform: translateX(-50%); background: var(--vivim-primary); color: white; padding: 8px 16px; border-radius: 6px; font-size: 12px; z-index: 1000; animation: fadeIn 0.2s; }
     @keyframes fadeIn { from { opacity: 0; transform: translateX(-50%) translateY(10px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
+    .header-tabs { display: flex; gap: 4px; margin-left: 12px; }
+    .header-tab { background: none; border: 1px solid var(--border-primary); border-radius: 4px; padding: 4px 12px; color: var(--text-secondary); cursor: pointer; font-size: 11px; }
+    .header-tab:hover { background: var(--bg-hover); color: var(--text-primary); }
+    .header-tab.active { background: var(--vivim-primary); border-color: var(--vivim-primary); color: white; }
+    .tab-content { display: none; flex: 1; flex-direction: column; overflow: hidden; }
+    .tab-content--active { display: flex; }
+    .debug-panel { flex: 1; display: flex; flex-direction: column; padding: 12px; gap: 10px; overflow: hidden; }
+    .debug-header { display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; }
+    .debug-controls { display: flex; gap: 6px; }
+    .debug-btn { background: var(--bg-tertiary); border: 1px solid var(--border-primary); border-radius: 4px; padding: 4px 10px; color: var(--text-primary); cursor: pointer; font-size: 11px; }
+    .debug-btn:hover { background: var(--bg-hover); }
+    .debug-btn--primary { background: var(--vivim-primary); border-color: var(--vivim-primary); }
+    .debug-btn--primary:hover { background: var(--vivim-primary-hover); }
+    .debug-btn--active { background: var(--vivim-success); border-color: var(--vivim-success); }
+    .debug-filters { display: flex; gap: 6px; flex-wrap: wrap; flex-shrink: 0; }
+    .debug-data { flex: 1; overflow-y: auto; background: var(--bg-secondary); border: 1px solid var(--border-primary); border-radius: 6px; padding: 8px; }
+    .debug-entry { margin-bottom: 8px; padding: 8px; border-radius: 4px; background: var(--bg-tertiary); border-left: 3px solid var(--vivim-primary); font-family: var(--font-mono); font-size: 11px; }
+    .debug-entry.request { border-left-color: #007bff; }
+    .debug-entry.response { border-left-color: #28a745; }
+    .debug-entry.stream { border-left-color: #ffc107; }
+    .debug-entry.error { border-left-color: #dc3545; background: #f8d7da; }
+    .debug-entry__header { display: flex; justify-content: space-between; margin-bottom: 4px; color: var(--text-secondary); }
+    .debug-entry__type { font-weight: 600; }
+    .debug-entry__time { color: var(--text-tertiary); font-size: 10px; }
+    .debug-entry__content { word-break: break-all; max-height: 100px; overflow: hidden; }
+    .debug-entry__content.expanded { max-height: none; }
 
     /* Settings Modal */
     .settings-modal { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; }

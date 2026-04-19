@@ -19,6 +19,9 @@ export class SidePanelController {
     this.logger = console;
     this.lastSentTime = 0;
     this.rateLimitMs = 1000;
+    this.debugCapturing = false;
+    this.debugData = [];
+    this.debugFilter = 'all';
 
     this.init();
   }
@@ -34,16 +37,22 @@ export class SidePanelController {
     this.providerName = document.getElementById('providerName');
     this.providerDot = document.getElementById('providerDot');
     this.msgCountEl = document.getElementById('msgCount');
+    this.chatContent = document.getElementById('chatContent');
+    this.debugContent = document.getElementById('debugContent');
+    this.debugDataEl = document.getElementById('debugData');
+    this.debugCaptureBtn = document.getElementById('debugCaptureBtn');
+    this.debugCopyAllBtn = document.getElementById('debugCopyAllBtn');
+    this.debugExportBtn = document.getElementById('debugExportBtn');
+    this.debugClearBtn = document.getElementById('debugClearBtn');
+this.debugConsoleBtn = document.getElementById('debugConsoleBtn');
+    this.consoleCapturing = false;
+    this.consoleLogs = [];
+
+    this.initResize();
 
     this.bindEvents();
-    this.initializeWithCurrentTab();
-    this.updateConnectionStatus('connecting');
-    this.updateProviderDisplay();
-
-    // Register the runtime message listener so the side panel receives
-    // broadcasts from the background (STREAM_UPDATE, MESSAGE_ADDED, etc.).
-    // This was previously missing — the side panel was completely deaf.
-    chrome.runtime.onMessage.addListener(this.handleMessage.bind(this));
+    this.bindTabs();
+    this.bindDebugPanel();
   }
 
   flushPendingUpdates() {
@@ -151,6 +160,11 @@ export class SidePanelController {
     if (clearBtn) {
       clearBtn.addEventListener('click', () => this.clearConversation());
     }
+
+    const debugToggleBtn = document.getElementById('debugToggleBtn');
+    if (debugToggleBtn) {
+      debugToggleBtn.addEventListener('click', () => this.switchPanelTab('debug'));
+    }
   }
 
   bindToolbar() {
@@ -160,7 +174,256 @@ export class SidePanelController {
     }
   }
 
-async initializeWithCurrentTab() {
+  initResize() {
+    const handle = document.getElementById('resizeHandle');
+    const panel = document.getElementById('sidepanel');
+    if (!handle || !panel) return;
+    
+    const self = this;
+    let startX, startWidth;
+    
+    handle.addEventListener('mousedown', function(e) {
+      startX = e.clientX;
+      startWidth = panel.offsetWidth;
+      handle.classList.add('resize-handle--active');
+      document.body.style.cursor = 'ew-resize';
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup', onMouseUp);
+      e.preventDefault();
+    });
+    
+    function onMouseMove(e) {
+      const diff = e.clientX - startX;
+      const newWidth = Math.min(600, Math.max(280, startWidth + diff));
+      panel.style.width = newWidth + 'px';
+    }
+    
+    function onMouseUp() {
+      handle.classList.remove('resize-handle--active');
+      document.body.style.cursor = '';
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+    }
+  }
+
+  bindTabs() {
+    document.querySelectorAll('.header-tab').forEach(tab => {
+      tab.addEventListener('click', () => this.switchPanelTab(tab.dataset.tab));
+    });
+  }
+
+  switchPanelTab(tabName) {
+    document.querySelectorAll('.header-tab').forEach(t => t.classList.remove('active'));
+    document.querySelector(`.header-tab[data-tab="${tabName}"]`)?.classList.add('active');
+    
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('tab-content--active'));
+    if (tabName === 'chat') {
+      this.chatContent?.classList.add('tab-content--active');
+    } else if (tabName === 'debug') {
+      this.debugContent?.classList.add('tab-content--active');
+    }
+  }
+
+bindDebugPanel() {
+    if (this.debugCaptureBtn) {
+      this.debugCaptureBtn.addEventListener('click', () => this.toggleDebugCapture());
+    }
+    if (this.debugCopyAllBtn) {
+      this.debugCopyAllBtn.addEventListener('click', () => this.copyDebugData());
+    }
+    if (this.debugExportBtn) {
+      this.debugExportBtn.addEventListener('click', () => this.exportDebugData());
+    }
+    if (this.debugClearBtn) {
+      this.debugClearBtn.addEventListener('click', () => this.clearDebugData());
+    }
+    if (this.debugConsoleBtn) {
+      this.debugConsoleBtn.addEventListener('click', () => this.toggleConsoleCapture());
+    }
+    document.querySelectorAll('.debug-filters .filter-btn').forEach(btn => {
+      btn.addEventListener('click', () => this.setDebugFilter(btn.dataset.filter));
+    });
+  }
+
+  toggleDebugCapture() {
+    this.debugCapturing = !this.debugCapturing;
+    if (this.debugCaptureBtn) {
+      this.debugCaptureBtn.textContent = this.debugCapturing ? 'Stop' : 'Capture';
+      this.debugCaptureBtn.classList.toggle('debug-btn--active', this.debugCapturing);
+    }
+  }
+
+  toggleConsoleCapture() {
+    this.consoleCapturing = !this.consoleCapturing;
+    if (this.debugConsoleBtn) {
+      this.debugConsoleBtn.classList.toggle('debug-btn--active', this.consoleCapturing);
+      this.debugConsoleBtn.textContent = this.consoleCapturing ? 'Stop Console' : 'Capture Console';
+    }
+    if (this.consoleCapturing && !this._consoleBound) {
+      this._consoleBound = true;
+      this._origLog = console.log;
+      this._origError = console.error;
+      this._origWarn = console.warn;
+      this._origInfo = console.info;
+      
+      const self = this;
+      console.log = function(...args) {
+        self._origLog.apply(console, args);
+        if (self.consoleCapturing) {
+          self.consoleLogs.push({ level: 'log', msg: args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' '), time: Date.now() });
+          self.renderConsoleLogs();
+        }
+      };
+      console.error = function(...args) {
+        self._origError.apply(console, args);
+        if (self.consoleCapturing) {
+          self.consoleLogs.push({ level: 'error', msg: args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' '), time: Date.now() });
+          self.renderConsoleLogs();
+        }
+      };
+      console.warn = function(...args) {
+        self._origWarn.apply(console, args);
+        if (self.consoleCapturing) {
+          self.consoleLogs.push({ level: 'warn', msg: args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' '), time: Date.now() });
+          self.renderConsoleLogs();
+        }
+      };
+    }
+  }
+
+  renderConsoleLogs() {
+    if (!this.debugDataEl) return;
+    const html = this.consoleLogs.slice(-50).map(l => 
+      `<div class="debug-entry ${l.level}"><div class="debug-entry__header"><span class="debug-entry__type">${l.level}</span><span class="debug-entry__time">${new Date(l.time).toLocaleTimeString()}</span></div><div class="debug-entry__content">${this.escapeHtml(l.msg.substring(0, 300))}</div></div>`
+    ).join('');
+    this.debugDataEl.innerHTML = html;
+  }
+
+  setDebugFilter(filter) {
+    this.debugFilter = filter;
+    document.querySelectorAll('.debug-filters .filter-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.filter === filter);
+    });
+    this.renderDebugData();
+  }
+
+  captureRawData(type, data) {
+    if (!this.debugCapturing) return;
+    
+    const entry = {
+      id: Date.now().toString(36) + Math.random().toString(36).substr(2, 5),
+      type,
+      timestamp: Date.now(),
+      iso: new Date().toISOString(),
+      provider: this.currentProvider?.id,
+      tabId: this.currentTabId,
+      data: this.flattenObject(data),
+      raw: JSON.stringify(data, null, 2)
+    };
+    
+    this.debugData.unshift(entry);
+    if (this.debugData.length > 500) {
+      this.debugData = this.debugData.slice(0, 500);
+    }
+    
+    this.renderDebugData();
+  }
+
+  flattenObject(obj, prefix = '') {
+    const result = {};
+    const keys = Object.keys(obj);
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
+      const value = obj[key];
+      const fullKey = prefix + key;
+      if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+        const nested = this.flattenObject(value, fullKey + '.');
+        const nestedKeys = Object.keys(nested);
+        for (let j = 0; j < nestedKeys.length; j++) {
+          result[nestedKeys[j]] = nested[nestedKeys[j]];
+        }
+      } else {
+        result[fullKey] = typeof value === 'string' ? value : JSON.stringify(value);
+      }
+    }
+    return result;
+  }
+
+  renderDebugData() {
+    if (!this.debugDataEl) return;
+    
+    const filtered = this.debugFilter === 'all' 
+      ? this.debugData 
+      : this.debugData.filter(e => e.type === this.debugFilter);
+    
+    if (filtered.length === 0) {
+      this.debugDataEl.innerHTML = `
+        <div class="empty-state">
+          <div class="empty-state__icon">🔍</div>
+          <div class="empty-state__title">No ${this.debugFilter === 'all' ? '' : this.debugFilter + ' '}raw data captured</div>
+          <div class="empty-state__desc">${this.debugCapturing ? 'Capturing...' : 'Click "Start Capture" to capture raw message data'}</div>
+        </div>
+      `;
+      return;
+    }
+    
+    this.debugDataEl.innerHTML = filtered.map(entry => `
+      <div class="debug-entry ${entry.type}">
+        <div class="debug-entry__header">
+          <span class="debug-entry__type">${entry.type.toUpperCase()}</span>
+          <span class="debug-entry__time">${new Date(entry.timestamp).toLocaleTimeString()}</span>
+        </div>
+        <div class="debug-entry__content">${this.escapeHtml(entry.raw.substring(0, 500))}${entry.raw.length > 500 ? '...' : ''}</div>
+      </div>
+    `).join('');
+  }
+
+  exportDebugData() {
+    const data = {
+      exportedAt: new Date().toISOString(),
+      captureEnabled: this.debugCapturing,
+      entryCount: this.debugData.length,
+      entries: this.debugData
+    };
+    
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `vivim-raw-data-${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    
+    this.showToast('Raw data exported');
+  }
+
+clearDebugData() {
+    if (confirm('Clear all captured debug data?')) {
+      this.debugData = [];
+      this.renderDebugData();
+      this.showToast('Debug data cleared');
+    }
+  }
+
+  copyDebugData() {
+    if (this.debugData.length === 0) {
+      this.showToast('No data to copy');
+      return;
+    }
+    
+    const allData = this.debugData.map(entry => {
+      return `[${entry.type.toUpperCase()}] ${new Date(entry.timestamp).toISOString()}\n${entry.raw}`;
+    }).join('\n\n---\n\n');
+    
+    navigator.clipboard.writeText(allData).then(() => {
+      this.showToast(`Copied ${this.debugData.length} entries`);
+    }).catch(err => {
+      this.showToast('Copy failed');
+      console.error('[SidePanel] Copy failed:', err);
+    });
+  }
+
+  async initializeWithCurrentTab() {
     try {
       console.log('[SidePanel] Querying for current tab...');
       const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -257,24 +520,28 @@ async initializeWithCurrentTab() {
         case MessageTypes.MESSAGE_ADDED:
           this.updateConnectionStatus('connected');
           this.addMessage(message.role, message.content, message.model, message.timestamp);
+          this.captureRawData('message', message);
           break;
 
         case MessageTypes.STREAM_UPDATE:
           this.updateConnectionStatus('streaming');
-          this.streamingModel = message.model; // Store model for completion
+          this.streamingModel = message.model;
           this.updateStreamingMessage(message.content, message.model, message.seq, message.isFinal);
+          this.captureRawData('stream', message);
           break;
 
         case MessageTypes.STREAM_COMPLETE:
           this.updateConnectionStatus('connected');
           this.finalizeStreamingMessage(this.streamingModel);
-          this.streamingModel = null; // Reset
+          this.streamingModel = null;
+          this.captureRawData('stream', { ...message, isComplete: true });
           break;
 
         case MessageTypes.ERROR:
           this.updateConnectionStatus('error');
           this.cleanupStreamingMessage();
           this.showToast(message.error || 'An error occurred');
+          this.captureRawData('error', message);
           break;
 
         case MessageTypes.CONVERSATION_CLEARED:
@@ -284,6 +551,7 @@ async initializeWithCurrentTab() {
         case MessageTypes.CONVERSATION_LOADED:
           this.updateConnectionStatus('connected');
           this.loadMessages(message.messages);
+          this.captureRawData('response', message);
           break;
 
         case MessageTypes.TAB_DETECTED:
@@ -335,6 +603,14 @@ async initializeWithCurrentTab() {
         tabId: this.currentTabId
       });
     }
+
+    // Capture raw request data before sending
+    this.captureRawData('request', {
+      content: text,
+      provider: this.currentProvider?.id,
+      tabId: this.currentTabId,
+      timestamp: Date.now()
+    });
 
     // Send USER_PROMPT to background for display
     console.log('[SidePanel] Sending USER_PROMPT to background...');
