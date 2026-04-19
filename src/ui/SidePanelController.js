@@ -1,4 +1,6 @@
 import { MessageTypes } from '../core/messaging/MessageTypes.js';
+import { DebugManager } from '../core/debug/DebugManager.js';
+import { DebugUIComponents } from './DebugUIComponents.js';
 
 /**
  * Side Panel Controller - Main UI orchestrator
@@ -19,9 +21,13 @@ export class SidePanelController {
     this.logger = console;
     this.lastSentTime = 0;
     this.rateLimitMs = 1000;
+
+    // Enhanced debugging infrastructure
+    this.debugManager = new DebugManager({ enabled: true, maxEntries: 2000 });
+    this.debugUI = new DebugUIComponents(this.debugManager, this);
     this.debugCapturing = false;
-    this.debugData = [];
     this.debugFilter = 'all';
+    this.debugTabs = ['events', 'streams', 'connections', 'performance', 'errors'];
 
     this.init();
   }
@@ -44,15 +50,31 @@ export class SidePanelController {
     this.debugCopyAllBtn = document.getElementById('debugCopyAllBtn');
     this.debugExportBtn = document.getElementById('debugExportBtn');
     this.debugClearBtn = document.getElementById('debugClearBtn');
-this.debugConsoleBtn = document.getElementById('debugConsoleBtn');
+    this.debugConsoleBtn = document.getElementById('debugConsoleBtn');
     this.consoleCapturing = false;
     this.consoleLogs = [];
+
+    // Enhanced debug UI elements
+    this.debugTabsContainer = document.getElementById('debugTabs');
+    this.debugStatsEl = document.getElementById('debugStats');
+    this.debugSearchInput = document.getElementById('debugSearchInput');
+    this.debugRealtimeToggle = document.getElementById('debugRealtimeToggle');
+    this.debugPerformanceEl = document.getElementById('debugPerformance');
+    this.debugConnectionsEl = document.getElementById('debugConnections');
 
     this.initResize();
 
     this.bindEvents();
     this.bindTabs();
     this.bindDebugPanel();
+
+    // Initialize enhanced debug UI
+    if (this.debugContent) {
+      this.debugUI.initialize(this.debugContent);
+    }
+
+    // Start real-time updates
+    this.startRealtimeUpdates();
   }
 
   flushPendingUpdates() {
@@ -194,7 +216,10 @@ this.debugConsoleBtn = document.getElementById('debugConsoleBtn');
     
     function onMouseMove(e) {
       const diff = e.clientX - startX;
-      const newWidth = Math.min(600, Math.max(280, startWidth + diff));
+      // Subtracting diff because the handle is on the left side of the panel.
+      // Moving mouse left (negative diff) should increase width.
+      // Moving mouse right (positive diff) should decrease width.
+      const newWidth = Math.min(600, Math.max(280, startWidth - diff));
       panel.style.width = newWidth + 'px';
     }
     
@@ -247,10 +272,29 @@ bindDebugPanel() {
 
   toggleDebugCapture() {
     this.debugCapturing = !this.debugCapturing;
-    if (this.debugCaptureBtn) {
-      this.debugCaptureBtn.textContent = this.debugCapturing ? 'Stop' : 'Capture';
-      this.debugCaptureBtn.classList.toggle('debug-btn--active', this.debugCapturing);
+    const btn = document.getElementById('debugCaptureBtn');
+    if (btn) {
+      btn.textContent = this.debugCapturing ? 'Stop' : 'Capture';
+      btn.classList.toggle('debug-btn--active', this.debugCapturing);
     }
+    if (this.debugCapturing) {
+      this.debugManager.captureStateTransition(Date.now().toString(36), 'IDLE', 'CONNECTING');
+    }
+  }
+
+  captureSSEBuffer(streamId, buffer, metadata) {
+    if (!this.debugCapturing) return;
+    this.debugManager.captureSSEBuffer(streamId, buffer, metadata);
+  }
+
+  captureJSONParse(streamId, raw, parsed, success, duration) {
+    if (!this.debugCapturing) return;
+    this.debugManager.captureJSONParse(streamId, raw, parsed, success, duration);
+  }
+
+  captureAccumulatorState(streamId, accumulator) {
+    if (!this.debugCapturing) return;
+    this.debugManager.captureAccumulator(streamId, accumulator);
   }
 
   toggleConsoleCapture() {
@@ -307,9 +351,10 @@ bindDebugPanel() {
     this.renderDebugData();
   }
 
-  captureRawData(type, data) {
+  // Legacy method - kept for backward compatibility
+  captureRawDataLegacy(type, data) {
     if (!this.debugCapturing) return;
-    
+
     const entry = {
       id: Date.now().toString(36) + Math.random().toString(36).substr(2, 5),
       type,
@@ -320,12 +365,12 @@ bindDebugPanel() {
       data: this.flattenObject(data),
       raw: JSON.stringify(data, null, 2)
     };
-    
+
     this.debugData.unshift(entry);
     if (this.debugData.length > 500) {
       this.debugData = this.debugData.slice(0, 500);
     }
-    
+
     this.renderDebugData();
   }
 
@@ -379,48 +424,143 @@ bindDebugPanel() {
   }
 
   exportDebugData() {
-    const data = {
-      exportedAt: new Date().toISOString(),
-      captureEnabled: this.debugCapturing,
-      entryCount: this.debugData.length,
-      entries: this.debugData
-    };
-    
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const data = this.debugManager.exportDataEnhanced('json');
+
+    const blob = new Blob([data], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `vivim-raw-data-${Date.now()}.json`;
+    a.download = `vivim-enhanced-debug-data-${Date.now()}.json`;
     a.click();
     URL.revokeObjectURL(url);
-    
-    this.showToast('Raw data exported');
+
+    this.showToast('Enhanced debug data exported');
   }
 
-clearDebugData() {
-    if (confirm('Clear all captured debug data?')) {
+  importDebugData() {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json';
+    input.onchange = (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        try {
+          const result = this.debugManager.importData(event.target.result);
+          if (result.success) {
+            this.debugUI.updateAllDisplays();
+            this.showToast(`Imported ${result.imported} debug entries`);
+          } else {
+            this.showToast('Import failed: ' + result.error);
+          }
+        } catch (error) {
+          this.showToast('Import failed: Invalid file format');
+        }
+      };
+      reader.readAsText(file);
+    };
+    input.click();
+  }
+
+  clearDebugData() {
+    if (confirm('Clear all captured debug data? This will clear both legacy and enhanced debug data.')) {
       this.debugData = [];
+      this.debugManager.clear();
       this.renderDebugData();
+      this.renderEnhancedDebugData();
+      this.updateDebugStats();
       this.showToast('Debug data cleared');
     }
   }
 
   copyDebugData() {
-    if (this.debugData.length === 0) {
+    const entries = this.debugManager.getEntries(this.debugFilter, 100);
+    if (entries.length === 0) {
       this.showToast('No data to copy');
       return;
     }
-    
-    const allData = this.debugData.map(entry => {
-      return `[${entry.type.toUpperCase()}] ${new Date(entry.timestamp).toISOString()}\n${entry.raw}`;
+
+    const allData = entries.map(entry => {
+      return `[${entry.type.toUpperCase()}] ${entry.iso}\n${JSON.stringify(entry.data, null, 2)}`;
     }).join('\n\n---\n\n');
-    
+
     navigator.clipboard.writeText(allData).then(() => {
-      this.showToast(`Copied ${this.debugData.length} entries`);
+      this.showToast(`Copied ${entries.length} entries`);
     }).catch(err => {
       this.showToast('Copy failed');
       console.error('[SidePanel] Copy failed:', err);
     });
+  }
+
+  // ===== ENHANCED DEBUG METHODS =====
+
+  // Debug tabs are now handled by DebugUIComponents
+
+  startRealtimeUpdates() {
+    this.realtimeUpdates = true;
+    this.realtimeInterval = setInterval(() => {
+      if (this.realtimeUpdates && this.debugContent && this.debugContent.classList.contains('tab-content--active')) {
+        this.debugUI.updateAllDisplays();
+      }
+    }, 1000); // Update every second
+  }
+
+  // Enhanced debug rendering is now handled by DebugUIComponents
+
+  // Enhanced event capture methods
+  captureConnectionEvent(type, data) {
+    this.debugManager.captureConnectionEvent(type, data, this.currentProvider?.id);
+  }
+
+  captureStreamEvent(type, data, streamId) {
+    this.debugManager.captureStreamEvent(type, data, streamId);
+    
+    if (type === 'chunk' && data?.content) {
+      this.debugManager.captureDelta(streamId, data.content, data.content, data.seq || 0);
+    }
+    if (type === 'complete') {
+      this.debugManager.captureStateTransition(streamId, 'STREAMING', 'DONE');
+    }
+  }
+
+  capturePerformanceMetric(metric, value, context = {}) {
+    this.debugManager.capturePerformanceMetric(metric, value, {
+      ...context,
+      provider: this.currentProvider?.id,
+      tabId: this.currentTabId
+    });
+  }
+
+// Override existing captureRawData to use new manager
+  captureRawData(type, data) {
+    if (!this.debugCapturing) return;
+
+    // Still maintain backward compatibility but also use new manager
+    const entry = {
+      id: Date.now().toString(36) + Math.random().toString(36).substr(2, 5),
+      type,
+      timestamp: Date.now(),
+      iso: new Date().toISOString(),
+      provider: this.currentProvider?.id,
+      tabId: this.currentTabId,
+      data: this.flattenObject(data),
+      raw: JSON.stringify(data, null, 2)
+    };
+
+    this.debugData.unshift(entry);
+    if (this.debugData.length > 500) {
+      this.debugData = this.debugData.slice(0, 500);
+    }
+
+    // Also capture in new manager
+    this.debugManager.captureEvent(type, data, {
+      provider: this.currentProvider?.id,
+      tabId: this.currentTabId
+    });
+
+    this.renderDebugData();
   }
 
   async initializeWithCurrentTab() {
@@ -455,6 +595,9 @@ clearDebugData() {
   async _connectWithRetry(attempt) {
     const MAX_ATTEMPTS = 4;
     const DELAY_MS = 500;
+
+    this.captureConnectionEvent('connection_attempt', { attempt: attempt + 1, maxAttempts: MAX_ATTEMPTS });
+
     try {
       const resp = await chrome.runtime.sendMessage({
         type: 'REGISTER_DESTINATION',
@@ -471,15 +614,18 @@ clearDebugData() {
         this.updateConnectionStatus('connected');
         console.log('[SidePanel] Registered with background on attempt', attempt + 1);
         this._startHeartbeat();
+        this.captureConnectionEvent('connection_success', { attempt: attempt + 1 });
         return;
       }
     } catch (err) {
       console.warn(`[SidePanel] Registration attempt ${attempt + 1} failed:`, err.message);
+      this.captureConnectionEvent('connection_failed', { attempt: attempt + 1, error: err.message });
     }
     if (attempt < MAX_ATTEMPTS - 1) {
       setTimeout(() => this._connectWithRetry(attempt + 1), DELAY_MS * (attempt + 1));
     } else {
       this.updateConnectionStatus('error');
+      this.captureConnectionEvent('connection_failed_permanently', { totalAttempts: MAX_ATTEMPTS });
     }
   }
 
@@ -520,28 +666,44 @@ clearDebugData() {
         case MessageTypes.MESSAGE_ADDED:
           this.updateConnectionStatus('connected');
           this.addMessage(message.role, message.content, message.model, message.timestamp);
-          this.captureRawData('message', message);
+          this.captureRawData('message_received', message);
+          this.captureConnectionEvent('message_received', { count: 1, model: message.model });
           break;
 
         case MessageTypes.STREAM_UPDATE:
           this.updateConnectionStatus('streaming');
           this.streamingModel = message.model;
           this.updateStreamingMessage(message.content, message.model, message.seq, message.isFinal);
-          this.captureRawData('stream', message);
+          this.captureStreamEvent('chunk', {
+            content: message.content,
+            seq: message.seq,
+            isFinal: message.isFinal,
+            model: message.model
+          }, message.streamId || 'unknown');
+          this.capturePerformanceMetric('stream_chunk_size', message.content?.length || 0, {
+            seq: message.seq,
+            streamId: message.streamId
+          });
           break;
 
         case MessageTypes.STREAM_COMPLETE:
           this.updateConnectionStatus('connected');
           this.finalizeStreamingMessage(this.streamingModel);
           this.streamingModel = null;
-          this.captureRawData('stream', { ...message, isComplete: true });
+          this.captureStreamEvent('complete', { success: true }, message.streamId || 'unknown');
+          this.captureConnectionEvent('stream_completed', { success: true, streamId: message.streamId });
           break;
 
         case MessageTypes.ERROR:
           this.updateConnectionStatus('error');
           this.cleanupStreamingMessage();
           this.showToast(message.error || 'An error occurred');
-          this.captureRawData('error', message);
+          this.debugManager.captureError(new Error(message.error || 'Unknown error'), {
+            type: message.type,
+            context: 'message_handler',
+            provider: this.currentProvider?.id
+          });
+          this.captureConnectionEvent('error', { error: message.error, type: message.type });
           break;
 
         case MessageTypes.CONVERSATION_CLEARED:
@@ -579,17 +741,66 @@ clearDebugData() {
 
   async sendPrompt() {
     const text = this.promptInput?.value?.trim();
-    if (!text || !this.currentTabId) {
-      console.log('[SidePanel] Cannot send: text empty or no currentTabId', { text: !!text, currentTabId: this.currentTabId });
+    
+    // First, try to find a provider tab if we don't have one
+    if (!this.currentTabId) {
+      console.log('[SidePanel] No currentTabId, attempting to find provider tab...');
+      const providerUrls = this.currentProvider?.id 
+        ? [`https://*/*${this.currentProvider.id}*`, "https://chatgpt.com/*", "https://chat.com/*", "https://claude.ai/*", "https://gemini.google.com/*"]
+        : ["https://chatgpt.com/*", "https://chat.com/*", "https://claude.ai/*", "https://gemini.google.com/*"];
+      const tabs = await chrome.tabs.query({ url: providerUrls });
+      if (tabs.length > 0) {
+        this.currentTabId = tabs[0].id;
+        console.log('[SidePanel] Found fallback provider tab:', this.currentTabId, 'URL:', tabs[0].url);
+      }
+    }
+    
+    // Now check if we have both text and a tab
+    if (!text) {
+      console.log('[SidePanel] Cannot send: text empty');
+      this.captureConnectionEvent('send_failed', { 
+        reason: 'missing_text', 
+        hasText: false, 
+        hasTabId: !!this.currentTabId,
+        currentProvider: this.currentProvider?.id || null,
+        tabId: this.currentTabId || null,
+        textLength: 0
+      });
+      return;
+    }
+    
+    if (!this.currentTabId) {
+      console.log('[SidePanel] Cannot send: no currentTabId found');
+      this.captureConnectionEvent('send_failed', { 
+        reason: 'missing_tab', 
+        hasText: !!text, 
+        hasTabId: false,
+        currentProvider: this.currentProvider?.id || null,
+        tabId: null,
+        textLength: text?.length || 0
+      });
+      this.showToast('No active AI provider tab found. Please open ChatGPT, Claude, or Gemini.');
       return;
     }
 
     const now = Date.now();
     if (now - this.lastSentTime < this.rateLimitMs) {
       this.showToast('Please wait before sending another message');
+      this.captureConnectionEvent('send_failed', { 
+        reason: 'rate_limited', 
+        timeSinceLast: now - this.lastSentTime,
+        currentProvider: this.currentProvider?.id || null,
+        tabId: this.currentTabId || null,
+        textLength: text.length,
+        rateLimitMs: this.rateLimitMs
+      });
       return;
     }
     this.lastSentTime = now;
+
+    // Start performance monitoring
+    this.debugManager.performanceMonitor.startTimer('send_prompt');
+    this.captureConnectionEvent('send_started', { textLength: text.length });
 
     console.log('[SidePanel] Sending prompt:', text, 'to tab:', this.currentTabId);
 
@@ -625,24 +836,28 @@ clearDebugData() {
       // Clear input only after successful sending
       this.promptInput.value = '';
       this.onInputChange();
+
+      // End performance monitoring
+      const duration = this.debugManager.performanceMonitor.endTimer('send_prompt');
+      this.captureConnectionEvent('send_completed', { success: true, duration });
     }).catch((error) => {
       console.error('[SidePanel] Failed to send USER_PROMPT:', error);
       this.showToast('Failed to send: ' + error.message);
-    });
 
-    // Only attempt injection if we have a valid tab ID
-    if (!this.currentTabId) {
-      this.logger.error('[SidePanel] No currentTabId available for injection');
-      // Try to find a valid provider tab as fallback
-      const providerTabs = await chrome.tabs.query({ url: [`https://*/*${this.currentProvider.id}*`, "https://chatgpt.com/*", "https://chat.com/*", "https://claude.ai/*", "https://gemini.google.com/*"] });
-      if (providerTabs.length > 0) {
-        this.currentTabId = providerTabs[0].id;
-        this.logger.info(`[SidePanel] Found fallback provider tab: ${this.currentTabId}`);
-      } else {
-        this.showToast('No active AI provider tab found. Please open ChatGPT, Claude, or Gemini.');
-        return;
-      }
-    }
+      // End performance monitoring with error
+      const duration = this.debugManager.performanceMonitor.endTimer('send_prompt');
+      this.captureConnectionEvent('send_failed', { 
+        success: false, 
+        error: error.message, 
+        errorCode: error.code || null,
+        errorName: error.name || null,
+        duration: duration || null,
+        currentProvider: this.currentProvider?.id || null,
+        tabId: this.currentTabId || null,
+        textLength: text?.length || 0
+      });
+      this.debugManager.captureError(error, { context: 'send_prompt_background' });
+    });
 
     try {
       this.logger.info(`[SidePanel] Attempting injection into tab ${this.currentTabId} for ${this.currentProvider.id}`);
@@ -750,6 +965,13 @@ clearDebugData() {
 
       this.streamingMessage = null;
     }
+    this.scrollToBottom();
+  }
+
+  scrollToBottom() {
+    if (this.messagesArea) {
+      this.messagesArea.scrollTop = this.messagesArea.scrollHeight;
+    }
   }
 
   cleanupStreamingMessage() {
@@ -826,7 +1048,7 @@ clearDebugData() {
         this.messagesArea.appendChild(activeStream);
       }
 
-      this.messagesArea.scrollTo(0, this.messagesArea.scrollHeight);
+      this.scrollToBottom();
     }
 
     // Keep the status bar message count accurate
@@ -877,6 +1099,13 @@ clearDebugData() {
   onInputChange() {
     if (this.sendBtn) {
       this.sendBtn.disabled = !this.promptInput?.value?.trim();
+    }
+    
+    // Auto-resize textarea height
+    if (this.promptInput) {
+      this.promptInput.style.height = 'auto';
+      const newHeight = Math.min(200, Math.max(42, this.promptInput.scrollHeight));
+      this.promptInput.style.height = newHeight + 'px';
     }
   }
 
@@ -1417,6 +1646,13 @@ clearDebugData() {
     );
 
     if (!this.messagesArea) return;
+
+    // Preserve active stream if it exists
+    const activeStream = this.streamingMessage;
+    if (activeStream) {
+      activeStream.remove();
+    }
+
     this.messagesArea.innerHTML = '';
 
     if (filtered.length === 0) {
@@ -1438,6 +1674,13 @@ clearDebugData() {
       this.messagesArea.appendChild(fragment);
     }
 
+    // Re-attach stream at bottom of search results if it was active
+    if (activeStream) {
+      this.messagesArea.appendChild(activeStream);
+    }
+
+    this.scrollToBottom();
+
     // Update message count in status bar based on search results
     if (this.msgCountEl) {
       const count = query ? filtered.length : this.messageList.length;
@@ -1457,6 +1700,12 @@ clearDebugData() {
       this.heartbeatTimer = null;
     }
 
+    // Clean up realtime updates
+    if (this.realtimeInterval) {
+      clearInterval(this.realtimeInterval);
+      this.realtimeInterval = null;
+    }
+
     // Clean up any pending toast timeouts
     if (this.toastTimeout) {
       clearTimeout(this.toastTimeout);
@@ -1465,6 +1714,14 @@ clearDebugData() {
 
     // Clean up streaming message if active
     this.cleanupStreamingMessage();
+
+    // Clean up debug components
+    if (this.debugUI) {
+      this.debugUI.stopRealtimeUpdates();
+    }
+    if (this.debugManager) {
+      this.debugManager.setEnabled(false);
+    }
 
     // Remove event listeners and cleanup references
     if (this.promptInput) {
