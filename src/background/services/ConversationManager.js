@@ -292,12 +292,15 @@ export class ConversationManager {
   async handleStreamChunkInternal(tabId, message) {
     const key = "stream_" + tabId;
     let existing = this.streamingMessages.get(key);
+    
+    this.logger.debug(`[handleStreamChunkInternal] Received chunk. streamId=${message.streamId}, seq=${message.seq}, isFinal=${message.isFinal}, contentLength=${message.content?.length}`);
 
     if (message.role === "assistant") {
       const seq = message.seq || 0;
       const streamId = message.streamId;
 
       if (!existing || (streamId && existing.streamId !== streamId)) {
+        this.logger.debug(`[handleStreamChunkInternal] Creating new stream. oldStreamId=${existing?.streamId}, newStreamId=${streamId}`);
         const oldExisting = existing;
         existing = {
           content: message.content,
@@ -311,23 +314,27 @@ export class ConversationManager {
         this.streamingMessages.set(key, existing);
 
         if (oldExisting) {
+          this.logger.debug(`[handleStreamChunkInternal] Finalizing old stream first.`);
           this.finalizeStreamingMessage(tabId, oldExisting).catch(e => this.logger.error('Finalize error', e));
         }
       } else {
         if (seq <= existing.lastSeq) {
-          this.logger.debug(`Out-of-order chunk: seq=${seq}, lastSeq=${existing.lastSeq}, skipping`);
+          this.logger.debug(`[handleStreamChunkInternal] Out-of-order chunk: seq=${seq}, lastSeq=${existing.lastSeq}, skipping`);
           return;
         }
 
+        this.logger.debug(`[handleStreamChunkInternal] Updating existing stream. oldLength=${existing.content?.length}, newLength=${message.content?.length}, newSeq=${seq}`);
         existing.content = message.content;
         existing.lastSeq = seq;
         if (message.model) existing.model = message.model;
         
         if (message.isFinal) {
           existing.isFinal = true;
+          this.logger.debug(`[handleStreamChunkInternal] Marked existing stream as final.`);
         }
       }
 
+      this.logger.debug(`[handleStreamChunkInternal] Broadcasting STREAM_UPDATE to UI. Seq=${existing.lastSeq}, Length=${existing.content?.length}, isFinal=${existing.isFinal}`);
       this.broadcastToUI({
         type: MessageTypes.STREAM_UPDATE,
         role: "assistant",

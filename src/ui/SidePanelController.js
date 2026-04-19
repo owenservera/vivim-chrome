@@ -412,6 +412,8 @@ async initializeWithCurrentTab() {
   }
 
   updateStreamingMessage(content, model, seq, isFinal = false) {
+    console.log('[SidePanel] updateStreamingMessage received:', { seq, length: content?.length, isFinal, contentPreview: content?.substring(0, 50) });
+    
     if (!this.messagesArea || !this.emptyState) {
       if (!this.pendingStreamUpdates) this.pendingStreamUpdates = [];
       this.pendingStreamUpdates.push({ content, model, seq, isFinal });
@@ -419,6 +421,7 @@ async initializeWithCurrentTab() {
     }
 
     if (!this.streamingMessage) {
+      console.log('[SidePanel] Creating new streaming message bubble');
       this.streamingMessage = document.createElement('div');
       this.streamingMessage.className = 'msg msg--assistant msg--streaming';
       this.streamingMessage.dataset.seq = '0';
@@ -431,34 +434,27 @@ async initializeWithCurrentTab() {
     }
 
     const currentSeq = parseInt(this.streamingMessage.dataset.seq || '0', 10);
+    console.log('[SidePanel] Processing chunk, currentSeq:', currentSeq, 'incoming seq:', seq);
     
     if (seq > currentSeq) {
-      this.chunkBuffer = this.chunkBuffer.filter(c => c.seq > currentSeq);
-      this.chunkBuffer.push({ content, seq });
-      this.chunkBuffer.sort((a, b) => a.seq - b.seq);
-      
-      let lastSeq = currentSeq;
-      for (const chunk of this.chunkBuffer) {
-        if (chunk.seq === lastSeq + 1) {
-          lastSeq = chunk.seq;
-          this.applyChunkToStream(chunk.content);
-        }
-      }
-      this.streamingMessage.dataset.seq = String(lastSeq);
+      // With cumulative streaming, we can just apply the latest content
+      console.log('[SidePanel] Applying chunk directly because seq > currentSeq');
+      this.streamingMessage.dataset.seq = String(seq);
+      this.applyChunkToStream(content);
     }
     
-    this.messagesArea?.scrollTo({
-      top: this.messagesArea.scrollHeight,
-      behavior: 'auto'
-    });
-
+    // Always apply if it's final, even if seq is weird
     if (isFinal) {
+      console.log('[SidePanel] Chunk isFinal=true, finalizing message');
+      this.applyChunkToStream(content);
       this.finalizeStreamingMessage(model);
       this.chunkBuffer = [];
     }
+    this.scrollToBottom();
   }
 
   applyChunkToStream(content) {
+    console.log('[SidePanel] applyChunkToStream length:', content?.length);
     const contentEl = this.streamingMessage?.querySelector('.msg__content');
     if (contentEl) {
       contentEl.innerHTML = this.formatMessage(content);

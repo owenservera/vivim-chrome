@@ -77,11 +77,19 @@ export class ChatGPTStealthInterceptor {
 
   async persistSecureAuth() {
     try {
-      await chrome.storage.local.set({
-        chatgpt_auth: this.authStore.getLatest()
-      });
+      if (typeof window !== 'undefined' && window.postMessage) {
+        window.postMessage({
+          type: 'vivim-bridge',
+          communicationId: 'vivim-bridge',
+          action: 'authUpdate',
+          data: {
+            provider: 'chatgpt',
+            auth: this.authStore.getLatest()
+          }
+        }, '*');
+      }
     } catch (e) {
-      this.logger.warn('Failed to persist auth:', e.message);
+      this.logger.warn('Failed to send authUpdate to bridge:', e.message);
     }
   }
 }

@@ -4,6 +4,8 @@
  */
 
 import { Logger } from '../logging/Logger.js';
+import { OpenAIChatCompletionsParser } from '../../providers/chatgpt/parsers/OpenAIChatCompletionsParser.js';
+import { DeltaEncodingV1Parser as NewDeltaParser } from '../../providers/chatgpt/parsers/DeltaEncodingV1Parser.js';
 
 export class StreamingManager {
   constructor(messageBridge, config = {}) {
@@ -263,12 +265,12 @@ export class StreamingManager {
    * Register default parsers
    */
   registerDefaultParsers() {
+    this.registerParser('delta-encoding-v1', NewDeltaParser);
+    this.registerParser('openai-chat', OpenAIChatCompletionsParser);
     this.registerParser('openai-responses', OpenAIResponsesParser);
     this.registerParser('openai-sse', OpenAISSEParser);
     this.registerParser('claude-sse', ClaudeSSEParser);
     this.registerParser('gemini-sse', GeminiSSEParser);
-
-    this.registerParser('delta-encoding-v1', DeltaEncodingV1Parser);
     this.registerParser('sse', SSEParser);
     this.registerParser('json-stream', JSONStreamParser);
   }
@@ -367,6 +369,7 @@ export class StreamingManager {
 
     // Send via message bridge
     if (this.messageBridge) {
+      this.logger.info(`[handleChunk] Sending chatChunk seq=${stream.chunks.length}, length=${stream.accumulatedContent.length}, cumulative=${true}, isFinal=${chunk.isFinal || false}`);
       this.messageBridge.send('chatChunk', {
         role: chunk.role || 'assistant',
         content: stream.accumulatedContent,
@@ -934,75 +937,113 @@ export class DeltaEncodingV1Parser extends BaseStreamParser {
   }
 
   async process(response) {
-    this.logger.debug(`Starting process() for stream ${this.streamId}`);
+    this.logger.info(`[DELTA_PARSER] === START streamId=${this.streamId} ===`);
     const clone = response.clone();
     const reader = clone.body.getReader();
     const decoder = new TextDecoder('utf-8');
 
     let buffer = '';
+    let totalBytesRead = 0;
+    let totalLinesProcessed = 0;
     const messageParts = [];
     let currentModel = { value: 'unknown' };
     let currentRole = { value: null };
     let chunkSequence = 0;
     let lastEmittedContent = '';
 
-    // SSE parsing state
     let currentEvent = 'message';
     let eventData = '';
+    let eventsSeen = new Set();
+    let payloadTypesSeen = new Set();
 
     try {
-      this.logger.debug(`[DEBUG_STREAM] Starting process() for stream ${this.streamId}. Reader active.`);
+      this.logger.info(`[DELTA_PARSER] Reader started, beginning stream consumption`);
       while (!this.isCancelled) {
         const { done, value } = await reader.read();
+        
         if (done) {
-          this.logger.debug(`[DEBUG_STREAM] Reader signaled DONE for ${this.streamId}`);
+          this.logger.info(`[DELTA_PARSER] Reader DONE signal received`);
           break;
         }
 
         if (value) {
-          buffer += decoder.decode(value, { stream: true });
+          const rawBytes = value.byteLength || value.length;
+          totalBytesRead += rawBytes;
+          const decoded = decoder.decode(value, { stream: true });
+          buffer += decoded;
+          this.logger.debug(`[DELTA_PARSER] READ ${rawBytes} bytes, buffer now ${buffer.length} chars`);
         }
 
         const lines = buffer.split('\n');
         buffer = lines.pop() || '';
+        this.logger.debug(`[DELTA_PARSER] Split into ${lines.length} lines, buffer residue ${buffer.length} chars`);
 
         for (const line of lines) {
+          totalLinesProcessed++;
           const trimmed = line.trim();
           if (!trimmed) continue;
 
-          this.logger.debug(`[DEBUG_STREAM] SSE Line: ${trimmed.substring(0, 100)}${trimmed.length > 100 ? '...' : ''}`);
+          const linePreview = trimmed.substring(0, 150);
+          this.logger.debug(`[DELTA_PARSER] LINE ${totalLinesProcessed}: "${linePreview}${trimmed.length > 150 ? '...' : ''}"`);
 
           if (trimmed.startsWith('event: ')) {
+            const prevEvent = currentEvent;
             currentEvent = trimmed.slice(7).trim();
-            this.logger.debug(`[DEBUG_STREAM] Event: ${currentEvent}`);
+            eventsSeen.add(currentEvent);
+            this.logger.info(`[DELTA_PARSER] EVENT CHANGE: "${prevEvent}" -> "${currentEvent}"`);
           } else if (trimmed.startsWith('data: ')) {
-            const data = trimmed.slice(6);
-            if (data === '[DONE]') {
-              this.logger.debug('[DEBUG_STREAM] Stream [DONE]');
+            const rawData = trimmed.slice(6);
+            this.logger.debug(`[DELTA_PARSER] DATA prefix, ${rawData.length} chars`);
+            
+            if (rawData === '[DONE]') {
+              this.logger.info(`[DELTA_PARSER] *** STREAM END MARKER [DONE] ***`);
               break;
             }
             
-            eventData = eventData ? eventData + '\n' + data : data;
+            eventData = eventData ? eventData + '\n' + rawData : rawData;
+            this.logger.debug(`[DELTA_PARSER] eventData buffer now ${eventData.length} chars`);
 
             try {
               const payload = JSON.parse(eventData);
-              this.logger.debug(`[DEBUG_STREAM] Successfully parsed JSON payload for ${currentEvent}`);
+              const payloadKeys = Object.keys(payload).join(', ');
+              payloadTypesSeen.add(payloadKeys);
+              this.logger.info(`[DELTA_PARSER] JSON PARSED OK: keys=[${payloadKeys}], eventType="${currentEvent}"`);
               
+              if (this.logger.isDebugEnabled()) {
+                this.logger.debug(`[DELTA_PARSER] FULL PAYLOAD: ${JSON.stringify(payload).substring(0, 500)}`);
+              }
+
               let hadContentChange = false;
               if (currentEvent === 'delta') {
+                this.logger.debug(`[DELTA_PARSER] Processing as delta event`);
                 hadContentChange = this.processDeltaPayload(payload, messageParts, currentModel, currentRole);
+              } else if (currentEvent === 'delta_encoding') {
+                this.logger.debug(`[DELTA_PARSER] Processing as delta_encoding event`);
+                hadContentChange = this.processDeltaEncodingPayload(payload, messageParts, currentModel, currentRole);
               } else if (currentEvent === 'message' || !currentEvent) {
                 if (payload.message) {
+                  this.logger.debug(`[DELTA_PARSER] Processing as message event`);
                   hadContentChange = this.processMessagePayload(payload, messageParts, currentModel, currentRole);
                 } else if (payload.o && payload.p) {
+                  this.logger.debug(`[DELTA_PARSER] Processing as implicit delta (o/p present)`);
                   hadContentChange = this.processDeltaPayload(payload, messageParts, currentModel, currentRole);
+                } else if (Array.isArray(payload)) {
+                  this.logger.debug(`[DELTA_PARSER] Processing as array payload`);
+                  hadContentChange = this.processDeltaEncodingPayload(payload, messageParts, currentModel, currentRole);
+                } else {
+                  this.logger.debug(`[DELTA_PARSER] No message.o/p, skipping`);
                 }
+              } else {
+                this.logger.debug(`[DELTA_PARSER] Unhandled event type "${currentEvent}", skipping`);
               }
 
               if (hadContentChange) {
                 const reconstructedText = this.reconstructContent(messageParts);
+                const prevLen = lastEmittedContent.length;
                 chunkSequence++;
-                this.logger.debug(`[DEBUG_STREAM] Emission triggered: seq=${chunkSequence}, len=${reconstructedText.length}`);
+                this.logger.info(`[DELTA_PARSER] *** EMIT CHUNK #${chunkSequence}: ${reconstructedText.length} chars (delta: ${reconstructedText.length - prevLen}) ***`);
+                this.logger.debug(`[DELTA_PARSER] Content preview: "${reconstructedText.substring(0, 100)}..."`);
+                
                 this.emitChunk({
                   content: reconstructedText,
                   role: currentRole.value || 'assistant',
@@ -1012,22 +1053,30 @@ export class DeltaEncodingV1Parser extends BaseStreamParser {
                   cumulative: true
                 });
                 lastEmittedContent = reconstructedText;
+              } else {
+                this.logger.debug(`[DELTA_PARSER] No content change detected`);
               }
               
-              // Clear on success
               eventData = '';
             } catch (e) {
-              this.logger.debug(`[DEBUG_STREAM] JSON partial/invalid (len=${eventData.length}): ${e.message}`);
+              this.logger.debug(`[DELTA_PARSER] JSON parse partial/invalid: ${e.message}, keeping buffer`);
             }
+          } else {
+            this.logger.debug(`[DELTA_PARSER] Non-event/data line: "${trimmed.substring(0, 50)}"`);
           }
         }
       }
 
-      // Send final complete message (only if we haven't emitted anything or content is different)
+      this.logger.info(`[DELTA_PARSER] Stream loop done. Events seen: ${Array.from(eventsSeen).join(', ')}`);
+      this.logger.info(`[DELTA_PARSER] Payload types: ${Array.from(payloadTypesSeen).join(', ')}`);
+
       const finalText = this.reconstructContent(messageParts);
+      this.logger.info(`[DELTA_PARSER] Final reconstruction: ${finalText.length} chars`);
+      this.logger.debug(`[DELTA_PARSER] Final content: "${finalText.substring(0, 200)}..."`);
+      
       if (finalText !== undefined) {
         chunkSequence++;
-        this.logger.debug(`Emitting final chunk ${chunkSequence} (${finalText.length} chars)`);
+        this.logger.info(`[DELTA_PARSER] *** EMIT FINAL CHUNK #${chunkSequence} ***`);
         this.emitChunk({
           content: finalText,
           role: currentRole.value || 'assistant',
@@ -1039,10 +1088,11 @@ export class DeltaEncodingV1Parser extends BaseStreamParser {
         });
       }
 
+      this.logger.info(`[DELTA_PARSER] === COMPLETE: ${totalBytesRead} bytes, ${totalLinesProcessed} lines, ${chunkSequence} chunks ===`);
       this.emitComplete();
 
     } catch (error) {
-      this.logger.error(`Error in process() for stream ${this.streamId}:`, error);
+      this.logger.error(`[DELTA_PARSER] ERROR: ${error.message}`, error.stack);
       this.emitError(error);
     }
   }
@@ -1050,21 +1100,34 @@ export class DeltaEncodingV1Parser extends BaseStreamParser {
   processMessagePayload(payload, messageParts, currentModel, currentRole) {
     let hadContentChange = false;
     const msg = payload.message;
-    if (!msg) return false;
+    if (!msg) {
+      this.logger.debug(`[DELTA_PARSER] processMessagePayload: no message field`);
+      return false;
+    }
 
+    this.logger.debug(`[DELTA_PARSER] processMessagePayload: author.role="${msg.author?.role}", model="${msg.metadata?.model_slug}"`);
     if (msg.author?.role) {
       currentRole.value = msg.author.role;
+      this.logger.debug(`[DELTA_PARSER] Role set to: ${currentRole.value}`);
     }
     if (msg.metadata?.model_slug) {
       currentModel.value = msg.metadata.model_slug;
+      this.logger.debug(`[DELTA_PARSER] Model set to: ${currentModel.value}`);
     }
 
     if (msg.content?.parts) {
       const newParts = msg.content.parts;
+      this.logger.debug(`[DELTA_PARSER] messageParts: ${newParts.length} parts`);
+      if (this.logger.isDebugEnabled()) {
+        this.logger.debug(`[DELTA_PARSER] Parts: ${JSON.stringify(newParts).substring(0, 200)}`);
+      }
       if (newParts.length !== messageParts.length || newParts.some((p, i) => p !== messageParts[i])) {
         messageParts.splice(0, messageParts.length, ...(Array.isArray(newParts) ? newParts : [newParts]));
         hadContentChange = true;
+        this.logger.info(`[DELTA_PARSER] messageParts updated, ${messageParts.length} parts now`);
       }
+    } else {
+      this.logger.debug(`[DELTA_PARSER] No content.parts in message`);
     }
     return hadContentChange;
   }
@@ -1075,25 +1138,31 @@ export class DeltaEncodingV1Parser extends BaseStreamParser {
     const op = payload.o;
     const path = payload.p;
     const value = payload.v;
+    
+    this.logger.debug(`[DELTA_PARSER] processDeltaPayload: op="${op}", path="${path}"`);
 
-    // Handle batched patch operations
     if (op === "patch" && Array.isArray(value)) {
+      this.logger.debug(`[DELTA_PARSER] Batch patch with ${value.length} operations`);
       for (const subOp of value) {
         const subPath = subOp.p;
         const subOpType = subOp.o;
         const subValue = subOp.v;
-
+        
         if (subPath === "/message/author/role") {
           currentRole.value = subValue;
+          this.logger.debug(`[DELTA_PARSER] Role set to: ${currentRole.value}`);
         }
 
         if (subPath === "/message/metadata" && subOpType === "add" && subValue?.model_slug) {
           currentModel.value = subValue.model_slug;
+          this.logger.debug(`[DELTA_PARSER] Model set to: ${currentModel.value}`);
         }
 
         if (subPath === "/message/content/parts" || subPath === "/message/content") {
+          this.logger.debug(`[DELTA_PARSER] Batch: content path matched`);
           if (subOpType === "replace" || subOpType === "add") {
             const newParts = subValue?.parts || subValue;
+            this.logger.debug(`[DELTA_PARSER] Batch: replacing with ${Array.isArray(newParts) ? newParts.length : 1} parts`);
             messageParts.splice(0, messageParts.length, ...(Array.isArray(newParts) ? newParts : [newParts]));
             hadContentChange = true;
           }
@@ -1102,6 +1171,7 @@ export class DeltaEncodingV1Parser extends BaseStreamParser {
           if (match) {
             const idx = parseInt(match[1], 10);
             const valToAppend = typeof subValue === 'string' ? subValue : (subValue?.parts?.[0] || subValue?.text || "");
+            this.logger.debug(`[DELTA_PARSER] Batch: parts[${idx}] op=${subOpType}, valLen=${valToAppend.length}`);
             if (subOpType === "append") {
               if (typeof messageParts[idx] === 'string') {
                 messageParts[idx] += valToAppend;
@@ -1121,14 +1191,16 @@ export class DeltaEncodingV1Parser extends BaseStreamParser {
     } else {
       if (path === "/message/author/role") {
         currentRole.value = value;
+        this.logger.debug(`[DELTA_PARSER] Single op: role="${value}"`);
       }
       if (path === "/message/metadata" && op === "add" && value?.model_slug) {
         currentModel.value = value.model_slug;
+        this.logger.debug(`[DELTA_PARSER] Single op: model="${value.model_slug}"`);
       }
       
-      // Check for content/parts replacement or addition
       if ((path === "/message/content/parts" || path === "/message/content") && (op === "replace" || op === "add")) {
         const newParts = value?.parts || value;
+        this.logger.debug(`[DELTA_PARSER] Single op: content replace/add, ${Array.isArray(newParts) ? newParts.length : 1} parts`);
         messageParts.splice(0, messageParts.length, ...(Array.isArray(newParts) ? newParts : [newParts]));
         hadContentChange = true;
       } else if (path && path.startsWith("/message/content/parts/")) {
@@ -1136,8 +1208,8 @@ export class DeltaEncodingV1Parser extends BaseStreamParser {
         if (match) {
           const idx = parseInt(match[1], 10);
           const valToAppend = typeof value === 'string' ? value : (value?.parts?.[0] || value?.text || "");
+          this.logger.debug(`[DELTA_PARSER] Single op: parts[${idx}] op=${op}, val="${valToAppend.substring(0, 50)}..."`);
           if (op === "append") {
-            // Handle appending string to string
             if (typeof messageParts[idx] === 'string') {
               messageParts[idx] += valToAppend;
             } else if (typeof messageParts[idx] === 'object' && messageParts[idx] !== null) {
@@ -1151,9 +1223,68 @@ export class DeltaEncodingV1Parser extends BaseStreamParser {
           }
           hadContentChange = true;
         }
+      } else {
+        this.logger.debug(`[DELTA_PARSER] Single op: unhandled path="${path}", op="${op}"`);
       }
     }
 
+    this.logger.debug(`[DELTA_PARSER] processDeltaPayload result: hadContentChange=${hadContentChange}, parts=${messageParts.length}`);
+    return hadContentChange;
+  }
+
+  processDeltaEncodingPayload(payload, messageParts, currentModel, currentRole) {
+    let hadContentChange = false;
+    
+    this.logger.info(`[DELTA_PARSER] processDeltaEncodingPayload called, isArray=${Array.isArray(payload)}`);
+    
+    if (Array.isArray(payload)) {
+      this.logger.info(`[DELTA_PARSER] Array payload with ${payload.length} elements`);
+      
+      for (let i = 0; i < payload.length; i++) {
+        const item = payload[i];
+        this.logger.info(`[DELTA_PARSER] Array item[${i}]: type=${typeof item}, isArray=${Array.isArray(item)}`);
+        
+        if (Array.isArray(item)) {
+          this.logger.info(`[DELTA_PARSER]   item[${i}] is array, len=${item.length}, contents=${JSON.stringify(item).substring(0, 200)}`);
+          
+          if (item.length >= 3) {
+            const op = item[0];
+            const path = item[1];
+            const value = item[2];
+            this.logger.info(`[DELTA_PARSER]   Numeric item: op="${op}", p="${path}", v=${JSON.stringify(value).substring(0, 100)}`);
+            
+            if (op === "patch" && Array.isArray(value)) {
+              this.logger.info(`[DELTA_PARSER]   Batch patch with ${value.length} ops`);
+              for (const subOp of value) {
+                const subResult = this.processDeltaPayload(subOp, messageParts, currentModel, currentRole);
+                hadContentChange = hadContentChange || subResult;
+              }
+            } else {
+              const subResult = this.processDeltaPayload({ o: op, p: path, v: value }, messageParts, currentModel, currentRole);
+              hadContentChange = hadContentChange || subResult;
+            }
+          }
+        } else if (item && typeof item === 'object') {
+          const itemKeys = Object.keys(item).join(', ');
+          this.logger.info(`[DELTA_PARSER]   item[${i}] is object, keys: ${itemKeys}`);
+          
+          if (item.o !== undefined && item.p !== undefined) {
+            this.logger.info(`[DELTA_PARSER]   Has o/p: o="${item.o}", p="${item.p}"`);
+            const itemResult = this.processDeltaPayload({ o: item.o, p: item.p, v: item.v }, messageParts, currentModel, currentRole);
+            hadContentChange = hadContentChange || itemResult;
+          } else {
+            this.logger.info(`[DELTA_PARSER]   No o/p, skipping object`);
+          }
+        } else {
+          this.logger.info(`[DELTA_PARSER]   item[${i}] is primitive: ${JSON.stringify(item).substring(0, 100)}`);
+        }
+      }
+    } else {
+      this.logger.info(`[DELTA_PARSER] Non-array payload in delta_encoding, trying as regular delta`);
+      hadContentChange = this.processDeltaPayload(payload, messageParts, currentModel, currentRole);
+    }
+    
+    this.logger.info(`[DELTA_PARSER] processDeltaEncodingPayload result: hadContentChange=${hadContentChange}, parts=${messageParts.length}`);
     return hadContentChange;
   }
 

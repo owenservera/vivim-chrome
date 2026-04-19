@@ -68,20 +68,19 @@ function setupInterception() {
     }
 
     let response = await originalFetch.apply(this, args);
-    let clonedResponse = response.clone();
 
     const responseProvider = providerRegistry.findProviderByResponse({
       url: reqUrl,
-      response: clonedResponse,
-      clone: () => clonedResponse?.clone()
+      response: response,
+      clone: () => response?.clone()
     });
 
     if (responseProvider) {
       try {
         await responseProvider.onResponse({
           url: reqUrl,
-          response: clonedResponse,
-          clone: () => clonedResponse.clone()
+          response: response,
+          clone: () => response.clone()
         });
       } catch (error) {
         console.warn(`[Providers] Error in ${responseProvider.id} provider onResponse:`, error);

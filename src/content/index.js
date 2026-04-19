@@ -89,7 +89,8 @@ function setupWebBridge() {
     const typeMap = {
       'userPrompt': 'USER_PROMPT',
       'chatChunk': 'STREAM_CHUNK',
-      'streamComplete': 'STREAM_COMPLETE'
+      'streamComplete': 'STREAM_COMPLETE',
+      'authUpdate': 'AUTH_UPDATE'
     };
     
     const backgroundType = typeMap[data.action];

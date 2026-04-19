@@ -65,6 +65,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === 'AUTH_UPDATE') {
+    if (message.provider && message.auth) {
+      chrome.storage.local.set({ [`${message.provider}_auth`]: message.auth })
+        .then(() => console.log(`[Background] Saved auth for ${message.provider}`))
+        .catch(err => console.error(`[Background] Failed to save auth:`, err));
+    }
+    sendResponse({ ok: true });
+    return true;
+  }
+
   if (message.type === 'PING') {
     if (message.component === 'sidepanel' || message.component === 'options') {
       destinationManager.registerDestination(message.component);
