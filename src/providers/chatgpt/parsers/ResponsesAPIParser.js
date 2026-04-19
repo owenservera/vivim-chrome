@@ -1,304 +1,244 @@
 /**
- * ResponsesAPIParser - OpenAI Responses API streaming
+ * ResponsesAPIParser
+ *
+ * Handles the OpenAI Responses API SSE streaming format (/v1/responses).
+ *
+ * Fixes vs original:
+ *   - Uses _textParts Map for content tracking by outputIndex:contentIndex
+ *   - Uses _fnCallArgs Map for function call argument buffers
+ *   - Uses _outputItems Map for output items
+ *   - _on* handler methods with consistent naming
+ *   - Proper accumulator integration via setContent(), setRole(), setModel(), etc.
  */
 
 import { BaseParser, StreamState } from './BaseParser.js';
-
-export const ResponsesEventType = {
-  RESPONSE_CREATED: 'response.created',
-  RESPONSE_QUEUED: 'response.queued',
-  RESPONSE_IN_PROGRESS: 'response.in_progress',
-  RESPONSE_COMPLETED: 'response.completed',
-  RESPONSE_FAILED: 'response.failed',
-  RESPONSE_INCOMPLETE: 'response.incomplete',
-  OUTPUT_ITEM_ADDED: 'response.output_item.added',
-  OUTPUT_ITEM_DONE: 'response.output_item.done',
-  CONTENT_PART_ADDED: 'response.content_part.added',
-  CONTENT_PART_DONE: 'response.content_part.done',
-  OUTPUT_TEXT_DELTA: 'response.output_text.delta',
-  OUTPUT_TEXT_DONE: 'response.output_text.done',
-  OUTPUT_TEXT_ANNOTATION_ADDED: 'response.output_text.annotation.added',
-  REFUSAL_DELTA: 'response.refusal.delta',
-  REFUSAL_DONE: 'response.refusal.done',
-  FUNCTION_CALL_ARGUMENTS_DELTA: 'response.function_call_arguments.delta',
-  FUNCTION_CALL_ARGUMENTS_DONE: 'response.function_call_arguments.done',
-  FILE_SEARCH_CALL_IN_PROGRESS: 'response.file_search_call.in_progress',
-  FILE_SEARCH_CALL_SEARCHING: 'response.file_search_call.searching',
-  FILE_SEARCH_CALL_COMPLETED: 'response.file_search_call.completed',
-  WEB_SEARCH_CALL_IN_PROGRESS: 'response.web_search_call.in_progress',
-  WEB_SEARCH_CALL_SEARCHING: 'response.web_search_call.searching',
-  WEB_SEARCH_CALL_COMPLETED: 'response.web_search_call.completed',
-  CODE_INTERPRETER_CALL_IN_PROGRESS: 'response.code_interpreter_call.in_progress',
-  CODE_INTERPRETER_CALL_INTERPRETING: 'response.code_interpreter_call.interpreting',
-  CODE_INTERPRETER_CALL_COMPLETED: 'response.code_interpreter_call.completed',
-  REASONING_SUMMARY_TEXT_DELTA: 'response.reasoning_summary_text.delta',
-  REASONING_SUMMARY_TEXT_DONE: 'response.reasoning_summary_text.done',
-  MCP_LIST_TOOLS_IN_PROGRESS: 'response.mcp_list_tools.in_progress',
-  MCP_LIST_TOOLS_COMPLETED: 'response.mcp_list_tools.completed',
-  MCP_CALL_IN_PROGRESS: 'response.mcp_call.in_progress',
-  MCP_CALL_COMPLETED: 'response.mcp_call.completed',
-  ERROR: 'error'
-};
+import { StreamAccumulator } from '../streaming/StreamAccumulator.js';
 
 export class ResponsesAPIParser extends BaseParser {
   constructor(options) {
     super(options);
-    this.outputItems = new Map();
-    this.currentItemId = null;
-    this.contentBuffer = '';
-    this.toolCallBuffer = '';
-    this.reasoningBuffer = '';
-    this.toolCalls = [];
-    this.itemContent = [];
-    this.currentContentIndex = 0;
+    this._textParts = new Map();
+    this._fnCallArgs = new Map();
+    this._outputItems = new Map();
+    this._responseId  = null;
+    this._model       = null;
   }
-  
-  async parse(response) {
-    await this.initialize();
-    
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder('utf-8');
-    let buffer = '';
-    
-    let currentEvent = 'message';
-    let eventData = '';
 
-    try {
-      while (!this.isCancelled) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-        
-        let streamDone = false;
-        for (const line of lines) {
-          if (this.isCancelled) break;
-          
-          const trimmed = line.trim();
-          if (!trimmed) continue;
-          
-          if (trimmed.startsWith('event: ')) {
-            currentEvent = trimmed.slice(7).trim();
-          } else if (trimmed.startsWith('data: ')) {
-            const data = trimmed.slice(6);
-            if (data === '[DONE]') {
-              streamDone = true;
-              break;
-            }
-            
-            eventData = eventData ? eventData + '\n' + data : data;
-            
-            try {
-              JSON.parse(eventData); // Validates JSON
-              await this.processEvent(currentEvent, eventData);
-              eventData = ''; // Reset after successful parse
-            } catch (e) {
-              if (e instanceof SyntaxError) {
-                // Partial JSON, keep accumulating in eventData
-              } else {
-                this.logger.error('Error processing event:', e, eventData);
-                eventData = ''; // Prevent infinite accumulation on logic errors
-              }
-            }
-          }
-        }
-        if (streamDone) break;
+  createAccumulator() {
+    return new StreamAccumulator();
+  }
+
+  async processEventPayload(eventType, payload) {
+    if (!eventType || !payload) return;
+
+    switch (eventType) {
+      case 'response.created':
+        return this._onResponseCreated(payload);
+
+      case 'response.output_item.added':
+        return this._onOutputItemAdded(payload);
+
+      case 'response.content_part.added':
+        return this._onContentPartAdded(payload);
+
+      case 'response.output_text.delta':
+        return this._onOutputTextDelta(payload);
+
+      case 'response.output_text.done':
+        return this._onOutputTextDone(payload);
+
+      case 'response.refusal.delta':
+        return this._onRefusalDelta(payload);
+
+      case 'response.refusal.done':
+        return this._onRefusalDone(payload);
+
+      case 'response.function_call_arguments.delta':
+        return this._onFnCallArgsDelta(payload);
+
+      case 'response.function_call_arguments.done':
+        return this._onFnCallArgsDone(payload);
+
+      case 'response.output_item.done':
+        return this._onOutputItemDone(payload);
+
+      case 'response.completed':
+      case 'response.done':
+        return this._onResponseCompleted(payload);
+
+      case 'error':
+        return this._onStreamError(payload);
+
+      default:
+        this.logger.debug(`[ResponsesAPI] Unhandled event: ${eventType}`);
+    }
+  }
+
+  _onResponseCreated(payload) {
+    const resp = payload.response ?? payload;
+    this._responseId = resp.id   ?? null;
+    this._model      = resp.model ?? null;
+    if (this._model) this.accumulator.setModel(this._model);
+    this.logger.debug(`[ResponsesAPI] Response created id=${this._responseId} model=${this._model}`);
+  }
+
+  _onOutputItemAdded(payload) {
+    const item = payload.item ?? {};
+    const idx  = payload.output_index ?? 0;
+    this._outputItems.set(idx, item);
+
+    if (item.type === 'message' && item.role) {
+      this.accumulator.setRole(item.role);
+      this.transition(StreamState.ROLE_RECEIVED);
+    }
+  }
+
+  _onContentPartAdded(payload) {
+    const key  = this._partKey(payload.output_index, payload.content_index);
+    const part = payload.part ?? {};
+    this._textParts.set(key, { type: part.type ?? 'output_text', text: part.text ?? '' });
+  }
+
+  _onOutputTextDelta(payload) {
+    const key   = this._partKey(payload.output_index, payload.content_index);
+    const delta = payload.delta ?? '';
+
+    const part = this._textParts.get(key);
+    if (part) {
+      part.text += delta;
+    } else {
+      this._textParts.set(key, { type: 'output_text', text: delta });
+    }
+
+    this.accumulator.appendContent(delta);
+    this.transition(StreamState.STREAMING);
+
+    this.emitChunk({
+      type:       'content',
+      content:    this.accumulator.content,
+      role:       this.accumulator.role,
+      model:      this._model,
+      cumulative: true,
+      isDelta:    true,
+    });
+  }
+
+  _onOutputTextDone(payload) {
+    const key  = this._partKey(payload.output_index, payload.content_index);
+    const text = payload.text ?? '';
+    const part = this._textParts.get(key);
+    if (part && part.text !== text) {
+      const diff = text.slice(part.text.length);
+      if (diff) {
+        this.accumulator.appendContent(diff);
+        part.text = text;
       }
-      
-      this.handleComplete();
-    } catch (error) {
-      if (error.name === 'AbortError' || error.message.includes('aborted') || error.message.includes('abort')) {
-        this.logger.info(`Stream aborted (${error.message}), treating as complete to flush buffer`);
-        this.handleComplete();
-      } else {
-        this.handleError(error);
+    }
+  }
+
+  _onRefusalDelta(payload) {
+    const delta = payload.delta ?? '';
+    this.accumulator.appendRefusal(delta);
+
+    this.emitChunk({
+      type:       'refusal',
+      refusal:    this.accumulator.refusal,
+      cumulative: true,
+      isDelta:    true,
+    });
+  }
+
+  _onRefusalDone(payload) {
+    if (payload.refusal != null) {
+      this.accumulator.appendRefusal('');
+    }
+  }
+
+  _onFnCallArgsDelta(payload) {
+    const idx   = payload.output_index ?? 0;
+    const delta = payload.delta ?? '';
+
+    const current = this._fnCallArgs.get(idx) ?? { callId: null, name: null, args: '' };
+    current.args += delta;
+    this._fnCallArgs.set(idx, current);
+
+    this.accumulator.applyToolCallDelta({
+      index:    idx,
+      function: { arguments: delta },
+    });
+
+    this.transition(StreamState.TOOL_CALLING);
+
+    this.emitChunk({
+      type:       'tool_call_delta',
+      index:      idx,
+      arguments:  current.args,
+      cumulative: true,
+      isDelta:    true,
+    });
+  }
+
+  _onFnCallArgsDone(payload) {
+    const idx  = payload.output_index ?? 0;
+    const args = payload.arguments ?? '';
+    const entry = this._fnCallArgs.get(idx);
+    if (entry) entry.args = args;
+  }
+
+  _onOutputItemDone(payload) {
+    const item = payload.item ?? {};
+    const idx  = payload.output_index ?? 0;
+    this._outputItems.set(idx, item);
+
+    if (item.type === 'function_call') {
+      this.accumulator.applyToolCallDelta({
+        index:    idx,
+        id:       item.call_id ?? item.id ?? null,
+        type:     'function',
+        function: { name: item.name ?? '', arguments: item.arguments ?? '' },
+      });
+    }
+
+    this.transition(StreamState.FINISHING);
+  }
+
+  _onResponseCompleted(payload) {
+    const resp = payload.response ?? payload;
+
+    if (resp.usage) this.accumulator.setUsage(resp.usage);
+
+    const outputArr = resp.output ?? [];
+    for (const item of outputArr) {
+      if (item.status === 'completed' || item.stop_reason) {
+        this.accumulator.setFinishReason(item.stop_reason ?? 'stop');
+        break;
       }
     }
   }
-  
-  async processEvent(eventType, data) {
-    if (this.isStreamEnd(data)) {
-      this.handleComplete();
-      return;
-    }
-    
-    const event = JSON.parse(data);
-    
-    if (event.type === ResponsesEventType.ERROR) {
-      this.handleError(new Error(event.message));
-      return;
-    }
-    
-    this.transitionForEvent(event.type);
-    
-    switch (event.type) {
-      case ResponsesEventType.RESPONSE_CREATED:
-        this.emitChunk({ type: 'created', response: event.response });
-        break;
-        
-      case ResponsesEventType.OUTPUT_ITEM_ADDED:
-        this.handleOutputItemAdded(event);
-        break;
-        
-      case ResponsesEventType.OUTPUT_TEXT_DELTA:
-        this.handleTextDelta(event);
-        break;
-        
-      case ResponsesEventType.OUTPUT_TEXT_DONE:
-        this.handleTextDone(event);
-        break;
-        
-      case ResponsesEventType.FUNCTION_CALL_ARGUMENTS_DELTA:
-        this.handleFunctionCallDelta(event);
-        break;
-        
-      case ResponsesEventType.FUNCTION_CALL_ARGUMENTS_DONE:
-        this.handleFunctionCallDone(event);
-        break;
-        
-      case ResponsesEventType.REFUSAL_DELTA:
-        this.handleRefusalDelta(event);
-        break;
-        
-      case ResponsesEventType.FILE_SEARCH_CALL_IN_PROGRESS:
-      case ResponsesEventType.FILE_SEARCH_CALL_SEARCHING:
-      case ResponsesEventType.FILE_SEARCH_CALL_COMPLETED:
-        this.emitChunk({ type: 'tool_progress', tool: 'file_search', status: event.type.split('.').pop(), event: event });
-        break;
-        
-      case ResponsesEventType.WEB_SEARCH_CALL_IN_PROGRESS:
-      case ResponsesEventType.WEB_SEARCH_CALL_SEARCHING:
-      case ResponsesEventType.WEB_SEARCH_CALL_COMPLETED:
-        this.emitChunk({ type: 'tool_progress', tool: 'web_search', status: event.type.split('.').pop(), event: event });
-        break;
-        
-      case ResponsesEventType.CODE_INTERPRETER_CALL_IN_PROGRESS:
-      case ResponsesEventType.CODE_INTERPRETER_CALL_INTERPRETING:
-      case ResponsesEventType.CODE_INTERPRETER_CALL_COMPLETED:
-        this.emitChunk({ type: 'tool_progress', tool: 'code_interpreter', status: event.type.split('.').pop(), event: event });
-        break;
-        
-      case ResponsesEventType.REASONING_SUMMARY_TEXT_DELTA:
-        this.handleReasoningDelta(event);
-        break;
-        
-      case ResponsesEventType.REASONING_SUMMARY_TEXT_DONE:
-        this.handleReasoningDone(event);
-        break;
-        
-      case ResponsesEventType.RESPONSE_COMPLETED:
-        this.emitChunk({ type: 'completed', response: event.response, isFinal: true });
-        break;
-        
-      case ResponsesEventType.RESPONSE_FAILED:
-        this.handleError(new Error(event.response?.error?.message || 'Response failed'));
-        break;
-    }
+
+  _onStreamError(payload) {
+    const err = payload.error ?? payload;
+    this.handleError(new Error(err?.message ?? 'Responses API stream error'));
   }
-  
-  transitionForEvent(eventType) {
-    if (eventType.includes('in_progress')) {
-      this.transition(StreamState.STREAMING);
-    } else if (eventType.includes('done') || eventType.includes('completed')) {
-      this.transition(StreamState.FINISHING);
-    }
-  }
-  
-  handleOutputItemAdded(event) {
-    this.currentItemId = event.item_id;
-    this.outputItems.set(event.item_id, {
-      id: event.item_id,
-      type: event.item?.type,
-      status: 'in_progress',
-      content: []
-    });
-    this.currentContentIndex = 0;
-    this.emitChunk({ type: 'item_added', item_id: event.item_id, item: event.item });
-  }
-  
-  handleTextDelta(event) {
-    this.contentBuffer += event.delta;
-    this.emitChunk({
-      type: 'content',
-      content: event.delta,
-      item_id: event.item_id,
-      cumulative: this.contentBuffer,
-      isDelta: true
-    });
-  }
-  
-  handleTextDone(event) {
-    this.emitChunk({
-      type: 'content_done',
-      content: this.contentBuffer,
-      item_id: event.item_id,
-      isFinal: true
-    });
-    this.contentBuffer = '';
-  }
-  
-  handleFunctionCallDelta(event) {
-    this.toolCallBuffer += event.delta;
-    this.emitChunk({
-      type: 'tool_call_delta',
-      tool_call_id: event.item_id,
-      arguments: event.delta,
-      cumulative: this.toolCallBuffer,
-      isDelta: true
-    });
-  }
-  
-  handleFunctionCallDone(event) {
-    const item = this.outputItems.get(event.item_id);
-    if (item) {
-      item.tool_call = { id: event.item_id, arguments: event.arguments };
-    }
-    this.emitChunk({
-      type: 'tool_call_done',
-      tool_call_id: event.item_id,
-      arguments: event.arguments,
-      isFinal: true
-    });
-    this.toolCallBuffer = '';
-  }
-  
-  handleRefusalDelta(event) {
-    this.emitChunk({
-      type: 'refusal',
-      content: event.delta,
-      isDelta: true
-    });
-  }
-  
-  handleReasoningDelta(event) {
-    this.reasoningBuffer += event.delta;
-    this.emitChunk({
-      type: 'reasoning',
-      content: event.delta,
-      cumulative: this.reasoningBuffer,
-      isDelta: true
-    });
-  }
-  
-  handleReasoningDone(event) {
-    this.emitChunk({
-      type: 'reasoning_done',
-      content: this.reasoningBuffer,
-      isFinal: true
-    });
-    this.reasoningBuffer = '';
-  }
-  
+
   handleComplete() {
-    const response = {
-      items: Array.from(this.outputItems.values()),
-      content: this.contentBuffer,
-      tool_calls: this.toolCalls
-    };
-    this.emitChunk({ type: 'complete', response, isFinal: true });
+    this.emitChunk({
+      type:          'complete',
+      content:       this.accumulator.content,
+      role:          this.accumulator.role,
+      model:         this._model,
+      tool_calls:    this.accumulator._getToolCallsArray(),
+      finish_reason: this.accumulator.finishReason,
+      usage:         this.accumulator.usage,
+      cumulative:    true,
+      isFinal:       true,
+    });
+
     super.handleComplete();
+  }
+
+  _partKey(outputIndex = 0, contentIndex = 0) {
+    return `${outputIndex}:${contentIndex}`;
   }
 }
 

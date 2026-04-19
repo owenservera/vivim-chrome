@@ -38,7 +38,7 @@ export class ChatGPTProvider extends BaseProvider {
     this.authStore = new ChatGPTAuthStore();
     this.interceptor = new ChatGPTStealthInterceptor(this.authStore, this.config);
     this.streamingManager = null;
-    this.dataFeedStudy = new ChatGPTDataFeedStudy({ enabled: false });
+    this.dataFeedStudy = new ChatGPTDataFeedStudy({ enabled: true });
   }
 
   onAuthDataLoaded(secureAuth) {
@@ -121,60 +121,9 @@ export class ChatGPTProvider extends BaseProvider {
     const contentType = ctx.response.headers.get('content-type');
     const isStreamingResponse = contentType && contentType.includes('text/event-stream');
 
-    // Enhanced debug capture for all responses
-    if (window.sidePanelController?.debugManager) {
-      window.sidePanelController.debugManager.captureEvent('provider_response', {
-        url: ctx.url,
-        status: ctx.response.status,
-        contentType,
-        isStreaming: isStreamingResponse,
-        contentLength: ctx.response.headers.get('content-length')
-      }, {
-        category: isStreamingResponse ? 'stream' : 'connection',
-        provider: 'chatgpt'
-      });
-    }
-
-    // Capture network event for study
-    this.dataFeedStudy.captureNetworkEvent('response', {
-      url: ctx.url,
-      method: ctx.method || 'GET',
-      status: ctx.response.status,
-      headers: Object.fromEntries(ctx.response.headers.entries()),
-      contentType,
-      contentLength: ctx.response.headers.get('content-length')
-    });
-
-    if (window.dataFeedManager?.isEnabled()) {
-      window.dataFeedManager.emit('provider:response', {
-        provider: 'chatgpt',
-        url: ctx.url,
-        responseStatus: ctx.response.status,
-        responseHeaders: Object.fromEntries(ctx.response.headers.entries()),
-        contentType: ctx.response.headers.get('content-type')
-      });
-    }
-
-    this.logger.info(`Response content-type: ${contentType}, isStreaming: ${isStreamingResponse}`);
-
     if (!isStreamingResponse) {
-      this.logger.info('Skipping non-streaming response (likely title generation or other secondary request)');
-
-      // Capture non-streaming response event
-      if (window.sidePanelController?.debugManager) {
-        window.sidePanelController.debugManager.captureEvent('non_streaming_response', {
-          url: ctx.url,
-          contentType,
-          reason: 'not_text_event_stream'
-        }, { category: 'connection' });
-      }
-
-      this.dataFeedStudy.captureNetworkEvent('non_streaming_response_filtered', {
-        url: ctx.url,
-        contentType,
-        reason: 'not_text_event_stream'
-      });
-      return; // Don't process as stream
+      this.logger.info('Skipping non-streaming response. contentType=' + contentType);
+      return;
     }
 
     if (!this.streamingManager) {
@@ -190,17 +139,6 @@ export class ChatGPTProvider extends BaseProvider {
     const streamId = 'chatgpt_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
     const format = 'delta-encoding-v1';
 
-    // Capture stream initialization
-    if (window.sidePanelController?.debugManager) {
-      window.sidePanelController.debugManager.captureStreamEvent('initialized', {
-        streamId,
-        format,
-        url: ctx.url
-      }, streamId);
-    }
-
-    this.logger.info(`Starting stream processing. ID: ${streamId}, Format: ${format}`);
-
     try {
       await this.streamingManager.processStream({
         streamId,
@@ -208,8 +146,8 @@ export class ChatGPTProvider extends BaseProvider {
         format,
         metadata: {
           provider: 'chatgpt',
-          model: 'unknown',
-          dataFeedStudy: this.dataFeedStudy // Pass study instance to parser
+          model: 'ChatGPT',
+          dataFeedStudy: this.dataFeedStudy
         }
       });
 

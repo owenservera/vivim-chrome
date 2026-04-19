@@ -1,109 +1,116 @@
 /**
- * StreamAccumulator - Accumulates streaming state
+ * StreamAccumulator - Accumulates incremental streaming state into a final message
+ *
+ * Fixes vs original:
+ *  - Proper methods: setContent(), appendContent(), setRole(), setModel(), setFinishReason(), setUsage()
+ *  - Tool call management: applyToolCallDelta(), setToolCalls(), _getToolCallsArray()
+ *  - Refusal handling: appendRefusal()
+ *  - reset() method for reuse
+ *  - Complete toMessage() returning structured object
  */
 
 export class StreamAccumulator {
   constructor() {
-    this.id = null;
-    this.model = null;
-    this.created = null;
-    this.system_fingerprint = null;
-    
-    this.role = 'assistant';
-    this.content = '';
-    this.refusal = null;
-    
-    this.tool_calls = [];
-    
-    this.finish_reason = null;
-    this.usage = null;
+    this.role         = 'assistant';
+    this.content      = '';
+    this.refusal      = null;
+    this.model        = null;
+    this.finishReason = null;
+    this.usage        = null;
+
+    this._toolCalls = new Map();
   }
-  
-  applyChunk(chunk) {
-    if (!chunk || !chunk.choices) return;
-    
-    for (const choice of chunk.choices) {
-      this.applyChoice(choice);
-    }
-    
-    if (chunk.choices.length === 0 && chunk.usage) {
-      this.usage = chunk.usage;
-    }
-    
-    if (chunk.id && !this.id) this.id = chunk.id;
-    if (chunk.model && !this.model) this.model = chunk.model;
-    if (chunk.created && !this.created) this.created = chunk.created;
-    if (chunk.system_fingerprint) this.system_fingerprint = chunk.system_fingerprint;
+
+  setContent(text) {
+    this.content = typeof text === 'string' ? text : String(text ?? '');
   }
-  
-  applyChoice(choice) {
-    const delta = choice.delta || {};
-    const finish_reason = choice.finish_reason;
-    
-    if (delta.role) {
-      this.role = delta.role;
-    }
-    
-    if (delta.content != null) {
-      this.content += delta.content;
-    }
-    
-    if (delta.refusal != null) {
-      this.refusal = (this.refusal || '') + delta.refusal;
-    }
-    
-    if (delta.tool_calls) {
-      this.applyToolCalls(delta.tool_calls);
-    }
-    
-    if (finish_reason) {
-      this.finish_reason = finish_reason;
+
+  appendContent(delta) {
+    this.content += typeof delta === 'string' ? delta : String(delta ?? '');
+  }
+
+  setRole(role) {
+    if (role) this.role = role;
+  }
+
+  setModel(model) {
+    if (model) this.model = model;
+  }
+
+  setFinishReason(reason) {
+    if (reason) this.finishReason = reason;
+  }
+
+  setUsage(usage) {
+    if (usage && typeof usage === 'object') {
+      this.usage = { ...usage };
     }
   }
-  
-  applyToolCalls(deltas) {
-    for (const tc of deltas) {
-      const idx = tc.index;
-      
-      if (!this.tool_calls[idx]) {
-        this.tool_calls[idx] = {
-          id: tc.id || '',
-          type: tc.type || 'function',
-          function: {
-            name: tc.function?.name || '',
-            arguments: tc.function?.arguments || ''
-          }
-        };
+
+  applyToolCallDelta(delta) {
+    const idx = delta.index ?? 0;
+
+    if (!this._toolCalls.has(idx)) {
+      this._toolCalls.set(idx, {
+        id:       delta.id   ?? null,
+        type:     delta.type ?? 'function',
+        function: { name: '', arguments: '' },
+      });
+    }
+
+    const entry = this._toolCalls.get(idx);
+
+    if (delta.id)   entry.id   = delta.id;
+    if (delta.type) entry.type = delta.type;
+
+    if (delta.function) {
+      if (delta.function.name      != null) entry.function.name      += delta.function.name;
+      if (delta.function.arguments != null) entry.function.arguments += delta.function.arguments;
+    }
+  }
+
+  setToolCalls(toolCalls) {
+    this._toolCalls.clear();
+    if (Array.isArray(toolCalls)) {
+      for (let i = 0; i < toolCalls.length; i++) {
+        this._toolCalls.set(i, toolCalls[i]);
       }
-      
-      const slot = this.tool_calls[idx];
-      
-      if (tc.id) slot.id = tc.id;
-      if (tc.type) slot.type = tc.type;
-      if (tc.function?.name) slot.function.name += tc.function.name;
-      if (tc.function?.arguments) slot.function.arguments += tc.function.arguments;
     }
   }
-  
-  toMessage() {
-    return {
-      id: this.id,
-      model: this.model,
-      role: this.role,
-      content: this.content,
-      refusal: this.refusal,
-      tool_calls: this.tool_calls.filter(Boolean),
-      finish_reason: this.finish_reason,
-      usage: this.usage
-    };
+
+  appendRefusal(delta) {
+    this.refusal = (this.refusal ?? '') + (delta ?? '');
   }
-  
+
+  toMessage() {
+    const msg = {
+      role:    this.role,
+      content: this.content || null,
+    };
+
+    if (this.refusal != null)      msg.refusal      = this.refusal;
+    if (this._toolCalls.size > 0)  msg.tool_calls   = this._getToolCallsArray();
+    if (this.model)                msg.model        = this.model;
+    if (this.finishReason)         msg.finish_reason = this.finishReason;
+    if (this.usage)                msg.usage        = this.usage;
+
+    return msg;
+  }
+
+  _getToolCallsArray() {
+    return [...this._toolCalls.entries()]
+      .sort(([a], [b]) => a - b)
+      .map(([, entry]) => entry);
+  }
+
   reset() {
-    this.content = '';
-    this.refusal = null;
-    this.tool_calls = [];
-    this.finish_reason = null;
-    this.usage = null;
+    this.role         = 'assistant';
+    this.content      = '';
+    this.refusal      = null;
+    this.model        = null;
+    this.finishReason = null;
+    this.usage        = null;
+    this._toolCalls.clear();
   }
 }
 
