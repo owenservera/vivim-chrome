@@ -8,10 +8,21 @@ export class DeltaEncodingV1Parser extends BaseParser {
     this.messageParts = [];
     this.currentModel = { value: 'unknown' };
     this.currentRole = { value: null };
+    this.dataFeedStudy = options.metadata?.dataFeedStudy || null;
   }
   
   createAccumulator() {
     return new StreamAccumulator();
+  }
+
+  emitChunk(chunk) {
+    // Capture chunk emission for study before emitting
+    if (this.dataFeedStudy) {
+      this.dataFeedStudy.captureChunkEmission(this.streamId, chunk, this.reconstructContent());
+    }
+
+    // Call parent emitChunk
+    super.emitChunk(chunk);
   }
   
   async process(response) {
@@ -20,11 +31,11 @@ export class DeltaEncodingV1Parser extends BaseParser {
   
   async parse(response) {
     await this.initialize();
-    
+
     const reader = response.clone().body.getReader();
     const decoder = new TextDecoder('utf-8');
     let buffer = '';
-    
+
     let currentEvent = 'message';
     let eventData = '';
 
@@ -32,18 +43,29 @@ export class DeltaEncodingV1Parser extends BaseParser {
       while (!this.isCancelled) {
         const { done, value } = await reader.read();
         if (done) break;
-        
-        buffer += decoder.decode(value, { stream: true });
+
+        const chunk = decoder.decode(value, { stream: true });
+        buffer += chunk;
+
+        // Capture raw stream data for study
+        if (this.dataFeedStudy) {
+          this.dataFeedStudy.captureRawStreamData(this.streamId, chunk, {
+            bufferLength: buffer.length,
+            currentEvent,
+            eventDataLength: eventData.length
+          });
+        }
+
         const lines = buffer.split('\n');
         buffer = lines.pop() || '';
-        
+
         let streamDone = false;
         for (const line of lines) {
           if (this.isCancelled) break;
-          
+
           const trimmed = line.trim();
           if (!trimmed) continue;
-          
+
           if (trimmed.startsWith('event: ')) {
             currentEvent = trimmed.slice(7).trim();
           } else if (trimmed.startsWith('data: ')) {
@@ -52,11 +74,17 @@ export class DeltaEncodingV1Parser extends BaseParser {
               streamDone = true;
               break;
             }
-            
+
             eventData = eventData ? eventData + '\n' + data : data;
-            
+
             try {
               const payload = JSON.parse(eventData);
+
+              // Capture SSE event for study
+              if (this.dataFeedStudy) {
+                this.dataFeedStudy.captureSSEEvent(this.streamId, currentEvent, payload, eventData);
+              }
+
               await this.processEventPayload(currentEvent, payload);
               eventData = ''; // Reset after successful parse
             } catch (e) {
@@ -64,6 +92,9 @@ export class DeltaEncodingV1Parser extends BaseParser {
                 // Partial JSON, keep accumulating in eventData
               } else {
                 this.logger.error('Error processing payload:', e, eventData);
+                if (this.dataFeedStudy) {
+                  this.dataFeedStudy.captureJSONParseAttempt(this.streamId, eventData, null, false, e);
+                }
                 eventData = ''; // Prevent infinite accumulation on logic errors
               }
             }
@@ -73,12 +104,27 @@ export class DeltaEncodingV1Parser extends BaseParser {
       }
       
       if (eventData) {
-        try {
-          const payload = JSON.parse(eventData);
-          await this.processEventPayload(currentEvent, payload);
-        } catch (e) {
-          // Ignore partial payload at end of stream
-        }
+            try {
+              const payload = JSON.parse(eventData);
+
+              // Capture successful JSON parse for study
+              if (this.dataFeedStudy) {
+                this.dataFeedStudy.captureJSONParseAttempt(this.streamId, eventData, payload, true);
+              }
+
+              await this.processEventPayload(currentEvent, payload);
+              eventData = ''; // Reset after successful parse
+            } catch (e) {
+              if (e instanceof SyntaxError) {
+                // Partial JSON, keep accumulating in eventData
+              } else {
+                this.logger.error('Error processing payload:', e, eventData);
+                if (this.dataFeedStudy) {
+                  this.dataFeedStudy.captureJSONParseAttempt(this.streamId, eventData, null, false, e);
+                }
+                eventData = ''; // Prevent infinite accumulation on logic errors
+              }
+            }
       }
       
       this.handleComplete();
@@ -98,15 +144,50 @@ export class DeltaEncodingV1Parser extends BaseParser {
       this.handleError(error);
       return;
     }
-    
+
     let hadContentChange = false;
-    
-    if (payload.o && payload.p) {
+
+    // Handle array-based JSON patches (as per fix plan)
+    if (Array.isArray(payload)) {
+      this.logger.info(`[DELTA_PARSER] Processing array payload with ${payload.length} items`);
+      if (this.dataFeedStudy) {
+        this.dataFeedStudy.captureDeltaProcessing(this.streamId, 'array_payload_processing', payload, null);
+      }
+
+      for (let i = 0; i < payload.length; i++) {
+        const item = payload[i];
+        this.logger.debug(`[DELTA_PARSER] Processing array item ${i}: ${JSON.stringify(item).substring(0, 100)}`);
+
+        if (item && typeof item === 'object' && item.o && item.p) {
+          // Individual patch operation
+          const itemResult = this.processDeltaPayload(item);
+          hadContentChange = hadContentChange || itemResult;
+
+          if (this.dataFeedStudy && itemResult) {
+            this.dataFeedStudy.captureDeltaProcessing(this.streamId, `array_item_${i}_${item.o}_${item.p}`, item, true);
+          }
+        } else if (Array.isArray(item) && item.length >= 3) {
+          // [op, path, value] format
+          const [op, path, value] = item;
+          const arrayItem = { o: op, p: path, v: value };
+          this.logger.debug(`[DELTA_PARSER] Converting array item to object: ${JSON.stringify(arrayItem).substring(0, 100)}`);
+
+          const itemResult = this.processDeltaPayload(arrayItem);
+          hadContentChange = hadContentChange || itemResult;
+
+          if (this.dataFeedStudy && itemResult) {
+            this.dataFeedStudy.captureDeltaProcessing(this.streamId, `array_format_${i}_${op}_${path}`, arrayItem, true);
+          }
+        } else {
+          this.logger.debug(`[DELTA_PARSER] Skipping array item ${i}: not a valid patch operation`);
+        }
+      }
+    } else if (payload.o && payload.p) {
       hadContentChange = this.processDeltaPayload(payload);
     } else if (payload.message) {
       hadContentChange = this.processMessagePayload(payload);
     }
-    
+
     if (hadContentChange) {
       const reconstructedText = this.reconstructContent();
       this.transition(StreamState.STREAMING);
@@ -149,6 +230,11 @@ export class DeltaEncodingV1Parser extends BaseParser {
     const op = payload.o;
     const path = Array.isArray(payload.p) ? "/" + payload.p.join("/") : payload.p;
     const value = payload.v;
+
+    // Capture delta processing for study
+    if (this.dataFeedStudy) {
+      this.dataFeedStudy.captureDeltaProcessing(this.streamId, 'processDeltaPayload', payload, null);
+    }
 
     if (op === "patch" && Array.isArray(value)) {
       for (const subOp of value) {

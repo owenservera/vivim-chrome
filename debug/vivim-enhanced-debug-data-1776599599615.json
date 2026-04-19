@@ -1,0 +1,34 @@
+{
+  "exportedAt": "2026-04-19T11:53:19.614Z",
+  "version": "1.0",
+  "stats": {
+    "totalEntries": 0,
+    "eventsByType": {},
+    "errors": {
+      "total": 0,
+      "byCategory": {},
+      "patterns": []
+    },
+    "streams": {
+      "totalStreams": 0,
+      "totalEvents": 0,
+      "activeStreams": 0,
+      "completedStreams": 0
+    },
+    "connections": {
+      "providers": [],
+      "totalEvents": 0
+    },
+    "performance": {},
+    "timeRange": {
+      "oldest": null,
+      "newest": null
+    }
+  },
+  "entries": [],
+  "metadata": {
+    "persistenceEnabled": true,
+    "maxEntries": 2000,
+    "totalCapturedEvents": 0
+  }
+}

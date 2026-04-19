@@ -318,7 +318,7 @@ this.shortcuts = {
 
         <!-- Keyboard Shortcuts Hint -->
         <div class="debug-shortcuts-hint">
-          <span class="shortcut"><kbd>1-5</kbd> Tabs</span>
+          <span class="shortcut"><kbd>1-7</kbd> Tabs</span>
           <span class="shortcut"><kbd>Ctrl+F</kbd> Search</span>
           <span class="shortcut"><kbd>E</kbd> Expand</span>
           <span class="shortcut"><kbd>R</kbd> Realtime</span>
@@ -571,37 +571,23 @@ this.shortcuts = {
     `;
   }
 
-  /**
-   * Render events tab with search & filtering
-   */
   renderEventsTab() {
     const container = document.getElementById('debugData');
     if (!container) return;
 
-    let entries = this.debugManager.getEntries('all', 500);
-
-    if (this.filters.timeRange !== 'all') {
-      const now = Date.now();
-      const ranges = { '5m': 5*60*1000, '15m': 15*60*1000, '1h': 60*60*1000, '24h': 24*60*60*1000 };
-      const cutoff = now - ranges[this.filters.timeRange];
-      entries = entries.filter(e => e.timestamp > cutoff);
+    let entries;
+    try {
+      entries = this.debugManager.getEntries('all', 500, {
+        timeRange: this.filters.timeRange,
+        severity: this.filters.severity,
+        searchQuery: this.searchQuery
+      });
+    } catch (err) {
+      entries = [];
     }
 
     if (this.filters.type !== 'all') {
       entries = entries.filter(e => e.type === this.filters.type);
-    }
-
-    if (this.filters.severity !== 'all') {
-      entries = entries.filter(e => (e.severity || 'info') === this.filters.severity);
-    }
-
-    if (this.searchQuery) {
-      const query = this.searchQuery.toLowerCase();
-      entries = entries.filter(e => 
-        (e.type && e.type.toLowerCase().includes(query)) ||
-        (e.data && JSON.stringify(e.data).toLowerCase().includes(query)) ||
-        (e.raw && e.raw.toLowerCase().includes(query))
-      );
     }
 
     if (entries.length === 0) {
@@ -1074,60 +1060,68 @@ this.shortcuts = {
     const sizeEl = document.getElementById('parsedDeltaSize');
     if (!deltaEl) return;
 
-    const streamData = this.getStreamData();
-    const chunks = streamData?.chunks || [];
-    const currentIndex = this.parserState.currentChunkIndex;
-    const currentChunk = chunks[currentIndex - 1];
-    const prevChunk = chunks[currentIndex - 2];
+    try {
+      const streamData = this.getStreamData();
+      const chunks = streamData?.chunks || [];
+      const currentIndex = this.parserState.currentChunkIndex;
+      const currentChunk = chunks[currentIndex - 1];
+      const prevChunk = chunks[currentIndex - 2];
 
-    let content = '';
-    let deltaSize = '+0 chars';
+      let content = '';
+      let deltaSize = '+0 chars';
 
-    if (this.parserState.viewMode === 'diff' && prevChunk && currentChunk) {
-      const prevText = prevChunk.cumulative || prevChunk.delta || '';
-      const currText = currentChunk.cumulative || currentChunk.delta || '';
-      content = this.computeDiff(prevText, currText);
-      const delta = currText.length - prevText.length;
-      deltaSize = delta >= 0 ? `+${delta} chars diff` : `${delta} chars diff`;
-    } else if (currentChunk) {
-      const rawContent = currentChunk.delta || currentChunk.cumulative || currentChunk.data?.content || '';
-      content = this.parserState.viewMode === 'raw'
-        ? JSON.stringify(currentChunk, null, 2)
-        : rawContent;
+      if (this.parserState.viewMode === 'diff' && prevChunk && currentChunk) {
+        const prevText = prevChunk.cumulative || prevChunk.delta || '';
+        const currText = currentChunk.cumulative || currentChunk.delta || '';
+        content = this.computeDiff(prevText, currText);
+        const delta = currText.length - prevText.length;
+        deltaSize = delta >= 0 ? `+${delta} chars diff` : `${delta} chars diff`;
+      } else if (currentChunk) {
+        const rawContent = currentChunk.delta || currentChunk.cumulative || currentChunk.data?.content || '';
+        content = this.parserState.viewMode === 'raw'
+          ? JSON.stringify(currentChunk, null, 2)
+          : rawContent;
 
-      if (prevChunk) {
-        const prevText = prevChunk.cumulative || prevChunk.delta || currentChunk.data?.content || '';
-        const delta = content.length - prevText.length;
-        deltaSize = delta >= 0 ? `+${delta} chars` : `${delta} chars`;
+        if (prevChunk) {
+          const prevText = prevChunk.cumulative || prevChunk.delta || currentChunk.data?.content || '';
+          const delta = content.length - prevText.length;
+          deltaSize = delta >= 0 ? `+${delta} chars` : `${delta} chars`;
+        }
       }
-    }
 
-    deltaEl.innerHTML = content || '<span style="color: var(--text-tertiary)">No data</span>';
-    if (sizeEl) sizeEl.textContent = deltaSize;
+      deltaEl.innerHTML = content || '<span style="color: var(--text-tertiary)">No data</span>';
+      if (sizeEl) sizeEl.textContent = deltaSize;
+    } catch (err) {
+      deltaEl.innerHTML = '<span style="color: var(--text-tertiary)">Error rendering delta</span>';
+    }
   }
 
   computeDiff(oldText, newText) {
-    if (!oldText || !newText) return this.escapeHtml(newText || oldText || '');
-    
-    const oldLines = oldText.split('\n');
-    const newLines = newText.split('\n');
-    const result = [];
-    
-    for (let i = 0; i < newLines.length; i++) {
-      const newLine = newLines[i];
-      const oldLine = oldLines[i];
+    try {
+      if (!oldText || !newText) return this.escapeHtml(newText || oldText || '');
       
-      if (oldLine === newLine) {
-        result.push(`<span class="diff-line">${this.escapeHtml(newLine)}</span>`);
-      } else if (!oldLine) {
-        result.push(`<span class="diff-line diff-added">+ ${this.escapeHtml(newLine)}</span>`);
-      } else {
-        result.push(`<span class="diff-line diff-removed">- ${this.escapeHtml(oldLine)}</span>`);
-        result.push(`<span class="diff-line diff-added">+ ${this.escapeHtml(newLine)}</span>`);
+      const oldLines = oldText.split('\n');
+      const newLines = newText.split('\n');
+      const result = [];
+      
+      for (let i = 0; i < newLines.length; i++) {
+        const newLine = newLines[i];
+        const oldLine = oldLines[i];
+        
+        if (oldLine === newLine) {
+          result.push(`<span class="diff-line">${this.escapeHtml(newLine)}</span>`);
+        } else if (!oldLine) {
+          result.push(`<span class="diff-line diff-added">+ ${this.escapeHtml(newLine)}</span>`);
+        } else {
+          result.push(`<span class="diff-line diff-removed">- ${this.escapeHtml(oldLine)}</span>`);
+          result.push(`<span class="diff-line diff-added">+ ${this.escapeHtml(newLine)}</span>`);
+        }
       }
+      
+      return result.join('\n');
+    } catch (err) {
+      return this.escapeHtml(newText || oldText || '');
     }
-    
-    return result.join('\n');
   }
 
   renderSSEEvents() {
@@ -1314,7 +1308,9 @@ this.shortcuts = {
       this.expandedEntries.clear();
     } else {
       const entries = this.debugManager.getEntries('all', 100);
-      entries.forEach(e => this.expandedEntries.add(e.id));
+      for (const e of entries) {
+      this.expandedEntries.add(e.id);
+    }
     }
     this.renderEventsTab();
   }
@@ -1499,9 +1495,6 @@ this.shortcuts = {
     });
   }
 
-  /**
-   * Start real-time updates
-   */
   startRealtimeUpdates() {
     this.stopRealtimeUpdates();
     this.realtimeInterval = setInterval(() => {
@@ -1511,14 +1504,20 @@ this.shortcuts = {
     }, 1000);
   }
 
-  /**
-   * Stop real-time updates
-   */
   stopRealtimeUpdates() {
     if (this.realtimeInterval) {
       clearInterval(this.realtimeInterval);
       this.realtimeInterval = null;
     }
+  }
+
+  destroy() {
+    this.stopRealtimeUpdates();
+    this.expandedEntries.clear();
+    this.parserState.bookmarks.clear();
+    this.parserState.pinnedEntries.clear();
+    this.realtimeMonitor.active = false;
+    this.debugManager?.destroy?.();
   }
 
   /** Utilities */

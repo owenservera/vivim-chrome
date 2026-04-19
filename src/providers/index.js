@@ -40,16 +40,26 @@ function setupInterception() {
   const originalFetch = window.fetch;
   window.fetch = async function(...args) {
     const [url, options] = args;
-    const reqUrl = typeof url === 'string' ? url : url?.url;
+    const reqUrl = typeof url === 'string' ? url : (url && url.url) || String(url);
     const method = options?.method || 'GET';
 
-    // Find provider that matches this request
+    console.log('[Providers] Fetch intercepted:', method, reqUrl);
+    console.log('[Providers] registry size:', providerRegistry.providers?.size);
+
+    if (!reqUrl || !reqUrl.includes('chatgpt') && !reqUrl.includes('claude') && !reqUrl.includes('gemini')) {
+      return originalFetch.apply(this, args);
+    }
+
+    console.log('[Providers] DETECTED AI API CALL:', reqUrl);
+
     const requestProvider = providerRegistry.findProviderByRequest({
       url: reqUrl,
       method: method,
       headers: options?.headers || {},
       body: options?.body
     });
+
+    console.log('[Providers] matched provider:', requestProvider?.id);
 
     if (requestProvider) {
       console.log(`[Providers] Match! Intercepting ${requestProvider.id} request:`, reqUrl);
@@ -67,24 +77,27 @@ function setupInterception() {
       }
     }
 
-    let response = await originalFetch.apply(this, args);
+let response = await originalFetch.apply(this, args);
+    const clonedResponse = response.clone();
 
     const responseProvider = providerRegistry.findProviderByResponse({
       url: reqUrl,
-      response: response,
-      clone: () => response?.clone()
+      response: clonedResponse,
+      clone: () => clonedResponse?.clone()
     });
 
     if (responseProvider) {
-      try {
-        await responseProvider.onResponse({
-          url: reqUrl,
-          response: response,
-          clone: () => response.clone()
-        });
-      } catch (error) {
-        console.warn(`[Providers] Error in ${responseProvider.id} provider onResponse:`, error);
-      }
+      setTimeout(async () => {
+        try {
+          await responseProvider.onResponse({
+            url: reqUrl,
+            response: clonedResponse,
+            clone: () => clonedResponse.clone()
+          });
+        } catch (error) {
+          console.warn(`[Providers] Error in ${responseProvider.id} provider onResponse:`, error);
+        }
+      }, 0);
     }
 
     return response;
@@ -96,13 +109,16 @@ function setupXHRInterception() {
   const originalSend = XMLHttpRequest.prototype.send;
 
   XMLHttpRequest.prototype.open = function(method, url, ...rest) {
-    this._xhr_url = url;
+    const reqUrl = typeof url === 'string' ? url : String(url);
+    this._xhr_url = reqUrl;
     this._xhr_method = method;
     this._xhr_headers = {};
+    console.log('[Providers] XHR intercepted:', method, reqUrl);
     return originalOpen.call(this, method, url, ...rest);
   };
 
   XMLHttpRequest.prototype.send = function(body) {
+    console.log('[Providers] XHR.send called for:', this._xhr_url);
     const ctx = {
       protocol: 'xhr',
       method: this._xhr_method,

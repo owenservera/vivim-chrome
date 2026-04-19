@@ -100,6 +100,57 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === 'runChatGPTTests') {
+    // Import the test scenarios dynamically
+    import('../providers/chatgpt/ChatGPTStreamingTestScenarios.js')
+      .then(({ default: ChatGPTStreamingTestScenarios }) => {
+        // We need access to the ChatGPT provider instance
+        // For now, we'll create a mock provider or find the real one
+        // This is a simplified implementation - in a real scenario,
+        // you'd need to access the actual provider instance
+        try {
+          // Create a mock provider for testing
+          const mockProvider = {
+            sendToBridge: (action, data) => {
+              logger.debug(`Mock sendToBridge: ${action}`, data);
+            },
+            dataFeedStudy: {
+              captureNetworkEvent: () => {},
+              captureSSEEvent: () => {},
+              captureJSONParseAttempt: () => {},
+              captureDeltaProcessing: () => {},
+              captureChunkEmission: () => {},
+              captureError: () => {}
+            }
+          };
+
+          const testScenarios = new ChatGPTStreamingTestScenarios(mockProvider);
+          return testScenarios.runAllScenarios();
+        } catch (error) {
+          throw new Error(`Failed to create test scenarios: ${error.message}`);
+        }
+      })
+      .then(results => {
+        sendResponse({
+          success: true,
+          results: {
+            total: results.results.length,
+            passed: results.results.filter(r => r.passed).length,
+            failed: results.results.filter(r => !r.passed).length
+          },
+          summary: results.summary
+        });
+      })
+      .catch(error => {
+        logger.error('Test scenarios failed:', error);
+        sendResponse({
+          success: false,
+          error: error.message
+        });
+      });
+    return true;
+  }
+
   if (message.type === 'API_STREAM_GET_STATUS') {
     sendResponse(apiStreamService.getStatus());
     return true;

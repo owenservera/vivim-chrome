@@ -217,11 +217,12 @@ export class DebugManager {
   }
 
   /**
-   * Get filtered entries
+   * Get filtered entries with advanced filters
    */
-  getEntries(filter = 'all', limit = 100) {
+  getEntries(filter = 'all', limit = 100, options = {}) {
     let filtered = this.entries;
 
+    // Type/category filter
     if (filter !== 'all') {
       if (filter === 'errors') {
         filtered = this.entries.filter(e => e.category === 'error');
@@ -234,6 +235,27 @@ export class DebugManager {
       } else {
         filtered = this.entries.filter(e => e.type === filter);
       }
+    }
+
+    // Time range filter
+    if (options.timeRange && options.timeRange !== 'all') {
+      const ranges = { '5m': 5*60*1000, '15m': 15*60*1000, '1h': 60*60*1000, '24h': 24*60*60*1000 };
+      const cutoff = Date.now() - (ranges[options.timeRange] || 0);
+      filtered = filtered.filter(e => e.timestamp > cutoff);
+    }
+
+    // Severity filter
+    if (options.severity && options.severity !== 'all') {
+      filtered = filtered.filter(e => (e.severity || 'info') === options.severity);
+    }
+
+    // Search query filter
+    if (options.searchQuery) {
+      const query = options.searchQuery.toLowerCase();
+      filtered = filtered.filter(e => 
+        (e.type && e.type.toLowerCase().includes(query)) ||
+        (e.data && JSON.stringify(e.data).toLowerCase().includes(query))
+      );
     }
 
     return filtered.slice(0, limit);
@@ -441,8 +463,27 @@ ${entry.metadata ? `Metadata: ${JSON.stringify(entry.metadata)}` : ''}
   }
 
   /**
-   * Generate unique ID
+   * Cleanup and destroy - prevents memory leaks
    */
+  destroy() {
+    this.stopAutoSave();
+    this.entries = [];
+    this.capturedEvents.clear();
+    if (this.performanceMonitor) {
+      this.performanceMonitor.clear();
+    }
+    if (this.errorTracker) {
+      this.errorTracker.clear();
+    }
+    if (this.streamCapture) {
+      this.streamCapture.clear();
+    }
+    if (this.connectionMonitor) {
+      this.connectionMonitor.clear();
+    }
+    this.enabled = false;
+  }
+
   generateId() {
     return Date.now().toString(36) + Math.random().toString(36).substr(2, 9);
   }
